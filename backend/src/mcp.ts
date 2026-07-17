@@ -1,74 +1,33 @@
-import { executeTool } from './tools'
-import { CORS_HEADERS } from './utils'
+import { executeTool, toolSchemas } from './tools'
+import { CORS_HEADERS, resolveSecret } from './utils'
 import type { Env } from './types'
 
 const REPO_PARAMS = {
-  owner: { type: 'string', description: 'GitHub repo owner/org' },
-  repo: { type: 'string', description: 'GitHub repo name' },
-  branch: { type: 'string', description: 'Branch name, defaults to main' },
+  owner: { type: 'string', description: 'GitHub repository owner or organization' },
+  repo: { type: 'string', description: 'GitHub repository name' },
+  branch: { type: 'string', description: 'Selected branch, defaults to main' },
 }
 
-const MCP_TOOLS = [
-  {
-    name: 'list_files',
-    description: 'List files and folders at a path in a GitHub repo.',
+const MCP_TOOLS = toolSchemas.map((schema) => {
+  const fn = schema.function
+  if (fn.name === 'create_repo') {
+    return { name: fn.name, description: fn.description, inputSchema: fn.parameters }
+  }
+  const parameters = fn.parameters as {
+    type: string
+    properties?: Record<string, unknown>
+    required?: readonly string[]
+  }
+  return {
+    name: fn.name,
+    description: fn.description,
     inputSchema: {
       type: 'object',
-      properties: { ...REPO_PARAMS, path: { type: 'string', description: 'Directory path, empty for root' } },
-      required: ['owner', 'repo'],
+      properties: { ...REPO_PARAMS, ...(parameters.properties ?? {}) },
+      required: ['owner', 'repo', ...(parameters.required ?? [])],
     },
-  },
-  {
-    name: 'read_file',
-    description: 'Read the contents of a file in a GitHub repo.',
-    inputSchema: {
-      type: 'object',
-      properties: { ...REPO_PARAMS, path: { type: 'string' } },
-      required: ['owner', 'repo', 'path'],
-    },
-  },
-  {
-    name: 'write_file',
-    description: 'Create or update a file and commit it directly to the branch — the same as pushing from a terminal.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        ...REPO_PARAMS,
-        path: { type: 'string' },
-        content: { type: 'string' },
-        message: { type: 'string' },
-      },
-      required: ['owner', 'repo', 'path', 'content'],
-    },
-  },
-  {
-    name: 'delete_file',
-    description: 'Delete a file and commit the deletion.',
-    inputSchema: {
-      type: 'object',
-      properties: { ...REPO_PARAMS, path: { type: 'string' }, message: { type: 'string' } },
-      required: ['owner', 'repo', 'path'],
-    },
-  },
-  {
-    name: 'list_commits',
-    description: 'List recent commits on a branch, optionally filtered to a path.',
-    inputSchema: {
-      type: 'object',
-      properties: { ...REPO_PARAMS, path: { type: 'string' }, limit: { type: 'number' } },
-      required: ['owner', 'repo'],
-    },
-  },
-  {
-    name: 'create_repo',
-    description: 'Create a new GitHub repository under the authenticated account.',
-    inputSchema: {
-      type: 'object',
-      properties: { name: { type: 'string' }, private: { type: 'boolean' }, description: { type: 'string' } },
-      required: ['name'],
-    },
-  },
-]
+  }
+})
 
 interface JsonRpcRequest {
   jsonrpc: '2.0'
@@ -89,11 +48,7 @@ function rpcError(id: string | number | undefined, code: number, message: string
   })
 }
 
-/**
- * Minimal MCP server (Streamable HTTP, non-streaming variant): one JSON-RPC
- * request per POST, one JSON-RPC response back. Enough for Claude's custom
- * connector UI, which drives tools/list + tools/call one at a time.
- */
+/** Streamable HTTP MCP endpoint for Claude, Gemini-compatible clients, and other MCP hosts. */
 export async function handleMcp(req: Request, env: Env): Promise<Response> {
   let rpc: JsonRpcRequest
   try {
@@ -106,8 +61,8 @@ export async function handleMcp(req: Request, env: Env): Promise<Response> {
     case 'initialize':
       return rpcResponse(rpc.id, {
         protocolVersion: '2024-11-05',
-        capabilities: { tools: {} },
-        serverInfo: { name: 'best-code-ide', version: '0.1.0' },
+        capabilities: { tools: { listChanged: false } },
+        serverInfo: { name: 'best-code-ide', version: '0.2.0' },
       })
 
     case 'notifications/initialized':
@@ -121,13 +76,21 @@ export async function handleMcp(req: Request, env: Env): Promise<Response> {
       return rpcResponse(rpc.id, { tools: MCP_TOOLS })
 
     case 'tools/call': {
+      const githubToken = resolveSecret(env, 'GITHUB_TOKEN')
+      if (!githubToken) {
+        return rpcResponse(rpc.id, {
+          content: [{ type: 'text', text: 'GITHUB_TOKEN secret is missing' }],
+          isError: true,
+        })
+      }
+
       const name = String(rpc.params?.name ?? '')
       const args = (rpc.params?.arguments as Record<string, unknown>) ?? {}
       if (!name) return rpcError(rpc.id, -32602, 'Missing tool name')
 
       if (name === 'create_repo') {
         try {
-          const result = await executeTool(name, args, env.GITHUB_TOKEN, { owner: '', repo: '', branch: '' })
+          const result = await executeTool(name, args, githubToken, { owner: '', repo: '', branch: '' })
           return rpcResponse(rpc.id, { content: [{ type: 'text', text: result }] })
         } catch (err) {
           return rpcResponse(rpc.id, {
@@ -144,13 +107,13 @@ export async function handleMcp(req: Request, env: Env): Promise<Response> {
           isError: true,
         })
       }
+
       try {
-        const result = await executeTool(
-          name,
-          rest,
-          env.GITHUB_TOKEN,
-          { owner: String(owner), repo: String(repo), branch: branch ? String(branch) : 'main' },
-        )
+        const result = await executeTool(name, rest, githubToken, {
+          owner: String(owner),
+          repo: String(repo),
+          branch: branch ? String(branch) : 'main',
+        })
         return rpcResponse(rpc.id, { content: [{ type: 'text', text: result }] })
       } catch (err) {
         return rpcResponse(rpc.id, {
