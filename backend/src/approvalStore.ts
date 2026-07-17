@@ -7,7 +7,11 @@ export type ApprovalStatus =
   | 'commit_prepared'
   | 'pushed'
   | 'pull_request_opened'
+  | 'deployment_started'
+  | 'deployment_completed'
+  | 'deployment_failed'
 
+export type ApprovalPurpose = 'code_change' | 'deployment'
 export type ChangeAction = 'create' | 'update' | 'delete'
 export type RiskLevel = 'normal' | 'high'
 export type TaskKind = 'build' | 'test' | 'deployment'
@@ -24,6 +28,7 @@ export interface StagedChange {
 
 export interface ApprovalOperation {
   operation_id: string
+  purpose?: ApprovalPurpose
   project_id: string
   repository: { owner: string; repo: string; full_name: string }
   branch: string
@@ -45,6 +50,8 @@ export interface ApprovalOperation {
   pushed_at?: string
   pr_number?: number
   pr_url?: string
+  deployment_target?: string
+  deployment_task_id?: string
 }
 
 export interface TaskRecord {
@@ -116,8 +123,11 @@ export class ApprovalStore {
       const operation = (await request.json().catch(() => null)) as ApprovalOperation | null
       if (!operation || !validId(operation.operation_id)) return json({ error: 'A valid operation_id is required' }, 400)
       if (await this.state.storage.get(operationKey(operation.operation_id))) return json({ error: 'Operation already exists' }, 409)
-      await this.state.storage.put(operationKey(operation.operation_id), operation)
-      return json(operation, 201)
+      await this.state.storage.put(operationKey(operation.operation_id), {
+        ...operation,
+        purpose: operation.purpose ?? 'code_change',
+      })
+      return json({ ...operation, purpose: operation.purpose ?? 'code_change' }, 201)
     }
 
     if (request.method === 'GET' && url.pathname === '/operations') {
@@ -182,8 +192,8 @@ export class ApprovalStore {
           commit_sha?: string
           commit_url?: string
         } | null
-        if (operation.status !== 'approved') {
-          return json({ error: `Operation cannot prepare a commit from status ${operation.status}`, operation }, 409)
+        if (operation.status !== 'approved' || (operation.purpose ?? 'code_change') !== 'code_change') {
+          return json({ error: `Operation cannot prepare a commit from status/purpose ${operation.status}/${operation.purpose}`, operation }, 409)
         }
         if (!body?.parent_sha || !body.commit_sha) return json({ error: 'parent_sha and commit_sha are required' }, 400)
         const updated: ApprovalOperation = {
@@ -224,6 +234,36 @@ export class ApprovalStore {
           updated_at: new Date().toISOString(),
           pr_number: body.number,
           pr_url: body.url,
+        }
+        await this.state.storage.put(operationKey(operationId), updated)
+        return json(updated)
+      }
+
+      if (request.method === 'POST' && segments[2] === 'deployment-started') {
+        const body = (await request.json().catch(() => null)) as { task_id?: string } | null
+        if ((operation.purpose ?? 'code_change') !== 'deployment' || operation.status !== 'approved') {
+          return json({ error: `Deployment operation must be approved; current status/purpose is ${operation.status}/${operation.purpose}`, operation }, 409)
+        }
+        if (!body?.task_id || !validId(body.task_id)) return json({ error: 'A valid task_id is required' }, 400)
+        const updated: ApprovalOperation = {
+          ...operation,
+          status: 'deployment_started',
+          updated_at: new Date().toISOString(),
+          deployment_task_id: body.task_id,
+        }
+        await this.state.storage.put(operationKey(operationId), updated)
+        return json(updated)
+      }
+
+      if (request.method === 'POST' && segments[2] === 'deployment-finished') {
+        const body = (await request.json().catch(() => null)) as { success?: boolean } | null
+        if (operation.status !== 'deployment_started') {
+          return json({ error: `Deployment cannot finish from status ${operation.status}`, operation }, 409)
+        }
+        const updated: ApprovalOperation = {
+          ...operation,
+          status: body?.success === true ? 'deployment_completed' : 'deployment_failed',
+          updated_at: new Date().toISOString(),
         }
         await this.state.storage.put(operationKey(operationId), updated)
         return json(updated)
