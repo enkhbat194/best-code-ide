@@ -23,7 +23,6 @@ const DEFAULT_PROJECTS: ProjectConfig[] = [
     description: 'Mobile-first GitHub and VS Code style repository controller.',
     buildWorkflow: 'validate.yml',
     testWorkflow: 'test.yml',
-    deployWorkflow: 'deploy.yml',
   },
 ]
 
