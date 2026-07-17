@@ -21,7 +21,17 @@ export default {
     const url = new URL(req.url)
 
     if (url.pathname === '/health') {
-      return jsonResponse({ ok: true })
+      // Booleans only — never the values. Confirms which secrets the running
+      // version actually has bound, since the dashboard can disagree.
+      return jsonResponse({
+        ok: true,
+        build: 'diag-1',
+        secrets: {
+          DEEPSEEK_API_KEY: Boolean(env.DEEPSEEK_API_KEY),
+          GITHUB_TOKEN: Boolean(env.GITHUB_TOKEN),
+          AUTH_TOKEN: Boolean(env.AUTH_TOKEN),
+        },
+      })
     }
 
     // Schema discovery is public so ChatGPT (and humans) can inspect the API before authenticating.
