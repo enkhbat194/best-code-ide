@@ -1,10 +1,14 @@
 import { executeReadOnlyMcpTool, readOnlyMcpTools } from './mcpReadTools'
+import { executeSafeWriteMcpTool, safeWriteMcpTools } from './mcpWriteTools'
 import { resolveSecret } from './utils'
 import type { Env } from './types'
 
 const LATEST_PROTOCOL_VERSION = '2025-11-25'
 const SUPPORTED_PROTOCOL_VERSIONS = new Set(['2025-11-25', '2025-06-18', '2025-03-26'])
 const DEFAULT_BROWSER_ORIGINS = ['https://chatgpt.com', 'https://chat.openai.com']
+const ALL_MCP_TOOLS = [...readOnlyMcpTools, ...safeWriteMcpTools]
+const READ_ONLY_NAMES = new Set(readOnlyMcpTools.map((tool) => tool.name))
+const SAFE_WRITE_NAMES = new Set(safeWriteMcpTools.map((tool) => tool.name))
 
 interface JsonRpcMessage {
   jsonrpc: '2.0'
@@ -98,22 +102,30 @@ function methodHeaders(method: string, toolName?: string): HeadersInit {
   }
 }
 
-/**
- * Stateless, JSON-response Streamable HTTP MCP endpoint.
- * GET is accepted by the route and returns 405 because this phase does not expose a server-initiated SSE stream.
- */
+function missingGithubTokenResult() {
+  return {
+    content: [{ type: 'text', text: JSON.stringify({ ok: false, error: { code: 'GITHUB_TOKEN_MISSING', message: 'GitHub access is not configured.' } }) }],
+    structuredContent: {
+      ok: false,
+      operation_id: crypto.randomUUID(),
+      status: 'failed',
+      error: {
+        code: 'GITHUB_TOKEN_MISSING',
+        message: 'GitHub access is not configured.',
+        retryable: false,
+        action_required: 'Set GITHUB_TOKEN in Cloudflare Secrets.',
+      },
+    },
+    isError: true,
+  }
+}
+
+/** Stateless JSON-response Streamable HTTP MCP endpoint. */
 export async function handleMcp(req: Request, env: Env): Promise<Response> {
   const originError = validateOrigin(req, env)
   if (originError) return originError
 
-  if (req.method === 'GET') {
-    return new Response(null, {
-      status: 405,
-      headers: { Allow: 'POST, GET', 'Cache-Control': 'no-store' },
-    })
-  }
-
-  if (req.method === 'DELETE') {
+  if (req.method === 'GET' || req.method === 'DELETE') {
     return new Response(null, {
       status: 405,
       headers: { Allow: 'POST, GET', 'Cache-Control': 'no-store' },
@@ -139,7 +151,6 @@ export async function handleMcp(req: Request, env: Env): Promise<Response> {
   }
 
   if (message.jsonrpc !== '2.0') return rpcError(message.id, -32600, 'jsonrpc must equal 2.0')
-
   if (isJsonRpcResponse(message)) return new Response(null, { status: 202, headers: { 'Cache-Control': 'no-store' } })
   if (typeof message.method !== 'string') return rpcError(message.id, -32600, 'Missing JSON-RPC method')
 
@@ -147,9 +158,6 @@ export async function handleMcp(req: Request, env: Env): Promise<Response> {
   if (protocolError) return protocolError
 
   if (isNotification(message)) {
-    if (message.method === 'notifications/initialized' || message.method === 'notifications/cancelled') {
-      return new Response(null, { status: 202, headers: { 'Cache-Control': 'no-store' } })
-    }
     return new Response(null, { status: 202, headers: { 'Cache-Control': 'no-store' } })
   }
 
@@ -164,11 +172,11 @@ export async function handleMcp(req: Request, env: Env): Promise<Response> {
           serverInfo: {
             name: 'bestcode-repository-controller',
             title: 'BestCode Repository Controller',
-            version: '0.3.0',
-            description: 'Read-only Phase 2 MCP surface for approved GitHub projects.',
+            version: '0.4.0',
+            description: 'Project-scoped repository controller with read tools and approval-gated staged writes.',
           },
           instructions:
-            'Use projects_list first. Only project IDs returned by that tool are accessible. This Phase 2 MCP surface is read-only; it cannot modify files, branches, commits, deployments, or secrets.',
+            'Use projects_list first. Create an agent/<task> branch before staging changes. repository_write_file, repository_apply_patch, and repository_delete_file only create pending approval operations; they never commit or push. The AI cannot approve its own operation.',
         },
         { 'MCP-Protocol-Version': protocolVersion },
       )
@@ -178,45 +186,34 @@ export async function handleMcp(req: Request, env: Env): Promise<Response> {
       return rpcResponse(message.id, {}, methodHeaders('ping'))
 
     case 'tools/list':
-      return rpcResponse(message.id, { tools: readOnlyMcpTools }, methodHeaders('tools/list'))
+      return rpcResponse(message.id, { tools: ALL_MCP_TOOLS }, methodHeaders('tools/list'))
 
     case 'tools/call': {
       const name = typeof message.params?.name === 'string' ? message.params.name : ''
       const args = message.params?.arguments
       if (!name) return rpcError(message.id, -32602, 'Missing tool name')
-      if (!readOnlyMcpTools.some((tool) => tool.name === name)) {
-        return rpcError(message.id, -32602, `Unknown or unavailable read-only tool: ${name}`)
+      if (!READ_ONLY_NAMES.has(name as never) && !SAFE_WRITE_NAMES.has(name as never)) {
+        return rpcError(message.id, -32602, `Unknown MCP tool: ${name}`)
       }
       if (args !== undefined && (!args || typeof args !== 'object' || Array.isArray(args))) {
         return rpcError(message.id, -32602, 'Tool arguments must be a JSON object')
       }
 
       const githubToken = resolveSecret(env, 'GITHUB_TOKEN')
-      if (!githubToken) {
-        return rpcResponse(message.id, {
-          content: [{ type: 'text', text: JSON.stringify({ ok: false, error: { code: 'GITHUB_TOKEN_MISSING', message: 'GitHub access is not configured.' } }) }],
-          structuredContent: {
-            ok: false,
-            operation_id: crypto.randomUUID(),
-            status: 'failed',
-            error: {
-              code: 'GITHUB_TOKEN_MISSING',
-              message: 'GitHub access is not configured.',
-              retryable: false,
-              action_required: 'Set GITHUB_TOKEN in Cloudflare Secrets.',
-            },
-          },
-          isError: true,
-        }, methodHeaders('tools/call', name))
-      }
+      if (!githubToken) return rpcResponse(message.id, missingGithubTokenResult(), methodHeaders('tools/call', name))
 
       const startedAt = Date.now()
-      const result = await executeReadOnlyMcpTool(name, (args as Record<string, unknown> | undefined) ?? {}, githubToken, env)
+      const toolArgs = (args as Record<string, unknown> | undefined) ?? {}
+      const result = READ_ONLY_NAMES.has(name as never)
+        ? await executeReadOnlyMcpTool(name, toolArgs, githubToken, env)
+        : await executeSafeWriteMcpTool(name, toolArgs, githubToken, env)
+
       console.log(JSON.stringify({
         event: 'mcp_tool_call',
         tool: name,
         operation_id: result.structuredContent.operation_id,
         ok: result.structuredContent.ok,
+        status: result.structuredContent.status,
         duration_ms: Date.now() - startedAt,
       }))
       return rpcResponse(message.id, result, methodHeaders('tools/call', name))
