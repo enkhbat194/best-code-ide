@@ -1,42 +1,77 @@
 # Best Code IDE
 
-Утаснаас GitHub repository-г шинжилж, код хайж, олон файл уншиж/засаж, working branch үүсгэж, diff болон validation шалган, commit/push хийхэд зориулсан mobile-first AI coding agent PWA.
+Утаснаас GitHub repository-г бүхэлд нь шинжилж, код хайж, олон файл уншиж/засаж, working branch үүсгэж, build шалгаж, алдааны log-ийг дахин уншин засварлаж, commit болон Pull Request хийх mobile-first AI coding agent PWA.
 
-## Одоогийн v0.2 agent core
+## Гол зорилго
+
+Custom GPT заавал мэдэх шаардлагагүй. Үндсэн хэрэглээ нь Best Code IDE app-ийн өөрийн **Chat** хэсэг:
 
 ```text
-ChatGPT Custom GPT Actions ─┐
-Claude remote MCP ──────────┼── Best Code IDE Worker ── GitHub
-Best Code IDE Chat ─────────┘            │
-                                         └── validation workflow
-
-GitHub repository ── import ── iPhone local workspace ── editor / local preview
+Хэрэглэгчийн coding task
+        ↓
+Best Code IDE Agent (DeepSeek)
+        ↓
+Repository tree → code search → related files
+        ↓
+agent/<task> working branch
+        ↓
+atomic multi-file commit
+        ↓
+GitHub Actions build/lint/typecheck
+        ↓
+failed log → AI repair → validation дахин
+        ↓
+diff → draft Pull Request
 ```
 
-### Хийгдсэн үндсэн чадвар
+ChatGPT, Claude, Gemini зэрэг гаднын chat холболт нь нэмэлт интерфэйс; app-ийн үндсэн agent ажиллахад заавал шаардлагагүй.
 
-- **Repository inspection** — recursive tree, directory listing, code search
-- **Multi-file context** — нэг дуудалтаар 12 хүртэл файл унших
-- **Editing** — файл үүсгэх, шинэчлэх, устгах, GitHub commit хийх
-- **Safe Git workflow** — branch жагсаах, working branch үүсгэх, branch diff харах
-- **Validation** — GitHub Actions дээр frontend lint/build, backend typecheck ажиллуулах
-- **External AI control**
-  - ChatGPT Custom GPT Actions: `/openapi.json`
-  - Claude болон MCP-compatible client: `/mcp`
-- **Mobile local workspace** — GitHub-аас text/code файлуудыг IndexedDB руу import хийх
-- **Local editor/preview** — CodeMirror + esbuild-wasm
+## Одоогийн agent core
+
+### Repository ба coding
+
+- Recursive repository tree болон directory listing
+- Code, symbol, error text хайх
+- Нэг дуудалтаар 12 хүртэл related file унших
+- `main/master` дээр AI шууд write хийхийг хориглох
+- `agent/<task>` working branch автоматаар үүсгэж app-ийн branch тохиргоог солих
+- 20 хүртэл file addition/update/delete-ийг **нэг atomic Git commit** болгох
+- Branch diff харах
+
+### Build, validation, repair
+
+- GitHub Actions дээр:
+  - frontend lint
+  - frontend production build
+  - backend TypeScript typecheck
+- Validation run болон job төлөв унших
+- Failed job log-ийн error мөрүүдийг agent-д буцаах
+- Алдааны log дээр үндэслэн хоёр хүртэл удаа autonomous repair хийх agent workflow
+
+### Mobile IDE
+
+- **Chat** — repository-aware coding agent
+- **Files** — GitHub-аас code/text файлыг iPhone IndexedDB local workspace руу import хийх, CodeMirror дээр засах
+- **Changes** — branch diff, validation, draft Pull Request
+- **Preview** — local HTML/JS/TS preview
+- **Settings** — backend, token, repository, branch
+
+### Нэмэлт AI холболт
+
+- MCP-compatible client: `/mcp`
+- REST/OpenAPI client: `/openapi.json`
+
+Эдгээр нь Claude, ChatGPT болон бусад supported AI client-д зориулсан нэмэлт боломж. App доторх agent-ийг ашиглахад тохируулах албагүй.
 
 ## Бүтэц
 
 ```text
-frontend/   React + Vite PWA — Chat / Files / Preview / Settings
-backend/    Cloudflare Worker — AI agent + GitHub tools + MCP + REST
+frontend/   React + Vite PWA — Chat / Files / Changes / Preview / Settings
+backend/    Cloudflare Worker — DeepSeek agent + GitHub tools + MCP + REST
 .github/    validation workflow
 ```
 
-## Нууц түлхүүрүүд
-
-Cloudflare Worker дээр:
+## Cloudflare Worker secret
 
 ```bash
 cd backend
@@ -48,15 +83,18 @@ npx wrangler secret put AUTH_TOKEN
 npx wrangler deploy
 ```
 
-`AUTH_TOKEN` нь Best Code IDE, ChatGPT Action болон MCP client-ийг Worker-тэй холбох нууц Bearer token.
+- `DEEPSEEK_API_KEY` — app доторх coding agent
+- `GITHUB_TOKEN` — selected repository-г унших, branch/commit/Actions/PR удирдах
+- `AUTH_TOKEN` — frontend болон backend хоорондын Bearer хамгаалалт
 
-### GitHub fine-grained token permission
+## GitHub fine-grained token permission
 
 Зөвхөн ашиглах repository-уудаа сонгоод:
 
-- **Contents: Read and write** — файл, commit, branch
-- **Actions: Read and write** — validation workflow эхлүүлэх, status унших
-- `create_repo` хэрэглэх бол **Administration: Write**; хэрэглэхгүй бол энэ permission-ийг бүү өг
+- **Contents: Read and write** — file, branch, atomic commit
+- **Actions: Read and write** — validation эхлүүлэх, run/job/log унших
+- **Pull requests: Read and write** — draft PR үүсгэх
+- `create_repo` ашиглах бол **Administration: Write**; ашиглахгүй бол бүү өг
 
 ## Frontend deploy
 
@@ -68,53 +106,53 @@ npm run build
 npx wrangler deploy
 ```
 
-`frontend/wrangler.toml` нь static assets deploy-ийг тохируулсан.
-
 ## iPhone дээр ашиглах
 
 1. Safari-аар frontend Worker URL-аа нээнэ.
 2. Share → **Add to Home Screen**.
-3. Settings хэсэгт:
-   - Worker backend URL
-   - `AUTH_TOKEN`
-   - GitHub owner
-   - repository
-   - branch
-4. Files → **GitHub** товчоор repository-н code/text файлуудыг local workspace руу татна.
-5. Chat хэсэгт repository дээр хийх ажлаа өгнө.
+3. Settings хэсэгт backend URL, `AUTH_TOKEN`, GitHub owner/repo/branch оруулна.
+4. Chat дээр шууд coding task өгнө.
 
-## ChatGPT Plus эрхээр удирдах
+Жишээ:
 
-ChatGPT-ийн web хувилбарт Custom GPT үүсгээд:
+```text
+Энэ repo-г бүхэлд нь шалга. Login алдааны шалтгааныг ол.
+Main дээр бүү бич. Working branch үүсгээд холбогдох файлуудыг
+нэг commit-оор зас. Build шалга. Алдаа гарвал log-ийг уншаад дахин зас.
+Амжилттай бол diff-ийг дүгнэж draft Pull Request үүсгэ.
+```
 
-- Actions → Import from URL: `https://<backend-worker>/openapi.json`
-- Authentication → API key → Bearer
-- Secret → Worker-ийн `AUTH_TOKEN`
+Agent дараахыг автоматаар хийх ёстой:
 
-Custom GPT-г нэг удаа web дээр тохируулсны дараа ChatGPT mobile app-аас ашиглаж болно. ChatGPT Plus эрх нь Custom GPT үүсгэх/ашиглах эрх өгдөг; энэ нь OpenAI API credit биш.
+1. Repository tree унших
+2. Code search хийх
+3. Related files унших
+4. Working branch үүсгэх
+5. Atomic commit хийх
+6. Validation хүлээх
+7. Failure log уншиж repair хийх
+8. Diff шалгах
+9. Хэрэглэгч end-to-end publish хүссэн бол draft PR үүсгэх
 
-## Claude Pro эрхээр удирдах
+## Subscription ба API-ийн ялгаа
 
-Claude web → Settings → Connectors → Add custom connector:
+- Best Code IDE app доторх agent одоогоор `DEEPSEEK_API_KEY` ашиглана.
+- ChatGPT Plus, Claude Pro, Google AI subscription-ийг гуравдагч app дотор API key шиг шууд ашиглах боломжгүй.
+- App дотор GPT/Claude/Gemini model шууд нэмэх бол тухайн provider-ийн тусдаа API key болон billing хэрэгтэй.
+- Subscription chat-аас Best Code IDE-г удирдах боломж нь тухайн платформын connector/action support-оос хамаарна; энэ нь app-ийн үндсэн workflow биш.
 
-- MCP URL: `https://<backend-worker>/mcp`
+## Аюулгүй ажиллагаа
 
-Claude Pro/Max/Team/Enterprise нь remote MCP connector ашиглаж чадна. Connector-оо web дээр нэмсний дараа Claude mobile app-аас ашиглана. Production түвшинд MCP authentication-ийг OAuth болгох шаардлагатай; одоогийн Worker нь нэг хэрэглэгчийн Bearer хамгаалалттай.
+- AI `main/master` руу шууд write/delete/atomic commit хийж чадахгүй.
+- Working branch, diff, validation ашиглана.
+- Agent Pull Request үүсгэж болно, merge хийхгүй.
+- `AUTH_TOKEN`, GitHub PAT, AI API key-г source code эсвэл GitHub-д commit хийхгүй.
+- Token permission-ийг зөвхөн шаардлагатай repository-д хязгаарлана.
 
-## Gemini
+## Үлдсэн том ажлууд
 
-Backend-ийн MCP endpoint нь MCP-compatible. Гэхдээ Gemini mobile chat дахь custom MCP app нь бүс нутаг, хэл болон Gemini Spark access-аар хязгаарлагдаж болно. Gemini-г app дотор шууд model provider болгон ашиглахад тусдаа Gemini API key шаардлагатай; Google AI subscription нь API credit-тэй адил биш.
-
-## Аюулгүй ажиллагааны дүрэм
-
-- AI-г `main`/`master` дээр өргөн засвар хийлгэхгүй; `agent/<task>` branch үүсгэнэ.
-- Diff болон validation амжилттай болсон эсэхийг шалгасны дараа merge хийнэ.
-- `AUTH_TOKEN`, GitHub PAT, AI API key-г frontend source эсвэл GitHub-д commit хийхгүй.
-- Token permission-ийг зөвхөн шаардлагатай repository болон capability-д хязгаарлана.
-
-## Одоогийн хязгаарлалт
-
-- Local import нь Cloudflare subrequest хамгаалалтаас шалтгаалан нэг удаад 40 хүртэл text/code файл татна.
-- Local preview npm package import-ыг бүрэн дэмжээгүй; full React/Vite/Next preview-д remote sandbox дараагийн шатанд хэрэгтэй.
-- GitHub Contents API засвар бүрийг тусдаа commit болгодог; multi-file atomic patch/commit дараагийн шатанд хийгдэнэ.
-- MCP OAuth, Pull Request creation, workflow log ingestion, automatic fix loop дараагийн milestone-д орно.
+- Local workspace-ийн олон файлын changes-ийг GitHub atomic commit-тэй бүрэн нэгтгэх
+- Full React/Vite/Next remote preview sandbox
+- OpenAI / Anthropic / Gemini API provider adapters
+- MCP OAuth болон олон хэрэглэгчийн account security
+- Conflict resolution болон commit revert UI
