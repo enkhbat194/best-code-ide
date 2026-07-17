@@ -49,7 +49,10 @@ export function ChatView() {
           </div>
         )}
         {messages.map((message) => (
-          <div key={message.id} className={`${styles.bubbleRow} ${message.role === 'user' ? 'user' : 'assistant'}`}>
+          <div
+            key={message.id}
+            className={`${styles.bubbleRow} ${message.role === 'user' ? styles.user : styles.assistant}`}
+          >
             <div className={styles.bubble}>
               {message.content || (isSending && message.role === 'assistant' ? '…' : '')}
               {message.toolCalls && message.toolCalls.length > 0 && (
