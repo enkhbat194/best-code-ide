@@ -1,9 +1,11 @@
 export interface Env {
-  DEEPSEEK_API_KEY: string
+  DEEPSEEK_API_KEY?: string
   GITHUB_TOKEN: string
   AUTH_TOKEN: string
   PROJECTS_JSON?: string
   MCP_ALLOWED_ORIGINS?: string
+  ENABLE_LEGACY_AGENT?: string
+  ENABLE_LEGACY_REST_WRITES?: string
   APPROVALS: DurableObjectNamespace
 }
 
