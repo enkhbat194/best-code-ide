@@ -1,213 +1,176 @@
+import { deliveryMcpTools } from './mcpDeliveryTools'
+import { readOnlyMcpTools } from './mcpReadTools'
+import { safeWriteMcpTools } from './mcpWriteTools'
+
+const ACTION_TOOLS = [...readOnlyMcpTools, ...safeWriteMcpTools, ...deliveryMcpTools]
+
+function tagFor(name: string): string {
+  if (name.startsWith('projects_') || name.startsWith('project_')) return 'Projects'
+  if (name.startsWith('build_') || name.startsWith('test_') || name.startsWith('task_')) return 'Build and test'
+  if (name.startsWith('approval_')) return 'Approvals'
+  if (name.startsWith('preview_')) return 'Preview'
+  return 'Repository'
+}
+
+function safetyNote(tool: (typeof ACTION_TOOLS)[number]): string {
+  if (tool.annotations.readOnlyHint) return 'This action is read-only.'
+  if (tool.name === 'repository_create_branch') {
+    return 'This action may create only a safe agent/<task> working branch. It cannot write to main/master.'
+  }
+  if (tool.name === 'repository_write_file' || tool.name === 'repository_apply_patch' || tool.name === 'repository_delete_file') {
+    return 'This action stages a diff only. It does not commit or push. The user must approve the operation in BestCode.'
+  }
+  if (tool.name === 'repository_commit') {
+    return 'This action requires an already approved operation and prepares a commit object without moving the branch ref.'
+  }
+  if (tool.name === 'repository_push') {
+    return 'This action fast-forwards an approved prepared commit. Force push and main/master are blocked.'
+  }
+  return 'This action follows BestCode project allowlists, protected-branch rules, and durable task state.'
+}
+
+function actionPaths(): Record<string, object> {
+  const paths: Record<string, object> = {}
+  for (const tool of ACTION_TOOLS) {
+    paths[`/api/actions/${tool.name}`] = {
+      post: {
+        operationId: tool.name,
+        summary: tool.title,
+        description: `${tool.description}\n\n${safetyNote(tool)}`,
+        tags: [tagFor(tool.name)],
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: tool.inputSchema,
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'Structured BestCode tool result. Check ok, status, result, and error fields.',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ToolEnvelope' },
+              },
+            },
+          },
+          '400': {
+            description: 'Invalid action request',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/HttpError' },
+              },
+            },
+          },
+          '401': {
+            description: 'Missing or invalid Bearer token',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/HttpError' },
+              },
+            },
+          },
+          '404': {
+            description: 'Unknown action or resource',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/HttpError' },
+              },
+            },
+          },
+          '500': {
+            description: 'BestCode server configuration error',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/HttpError' },
+              },
+            },
+          },
+        },
+      },
+    }
+  }
+  return paths
+}
+
 /** OpenAPI 3.1 schema for ChatGPT Custom GPT Actions and other REST clients. */
 export function openapiSpec(origin: string): object {
-  const ownerParam = { name: 'owner', in: 'path', required: true, schema: { type: 'string' } }
-  const repoParam = { name: 'repo', in: 'path', required: true, schema: { type: 'string' } }
-  const branchParam = { name: 'branch', in: 'query', schema: { type: 'string', default: 'main' } }
-
   return {
     openapi: '3.1.0',
     info: {
-      title: 'Best Code IDE Agent API',
-      description: 'Inspect, search, edit, compare, validate, and manage GitHub repositories from AI chats.',
-      version: '0.2.0',
+      title: 'BestCode Repository Controller',
+      description:
+        'Project-scoped GitHub and IDE controller for ChatGPT Actions. Use projects_list first, work only on agent/<task> branches, stage changes for user approval, then commit, push, build, test, and open a draft pull request.',
+      version: '0.6.0',
     },
     servers: [{ url: origin }],
     security: [{ bearerAuth: [] }],
+    tags: [
+      { name: 'Projects', description: 'Allowed project registry.' },
+      { name: 'Repository', description: 'Repository inspection, staged changes, Git delivery, and pull requests.' },
+      { name: 'Approvals', description: 'Read approval state. Approval decisions remain user-only in the BestCode UI.' },
+      { name: 'Build and test', description: 'GitHub Actions task start, status, logs, and cancellation.' },
+      { name: 'Preview', description: 'Configured project preview metadata.' },
+    ],
     components: {
       securitySchemes: {
-        bearerAuth: { type: 'http', scheme: 'bearer' },
-      },
-    },
-    paths: {
-      '/api/repos/{owner}/{repo}/tree': {
-        get: {
-          operationId: 'listRepositoryTree',
-          summary: 'List the recursive repository tree',
-          parameters: [ownerParam, repoParam, branchParam, { name: 'max_entries', in: 'query', schema: { type: 'integer', default: 500 } }],
-          responses: { '200': { description: 'Repository tree' } },
+        bearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'BestCode AUTH_TOKEN',
         },
       },
-      '/api/repos/{owner}/{repo}/search': {
-        get: {
-          operationId: 'searchRepositoryCode',
-          summary: 'Search repository code by keyword, symbol, filename, or error text',
-          parameters: [
-            ownerParam,
-            repoParam,
-            branchParam,
-            { name: 'query', in: 'query', required: true, schema: { type: 'string' } },
-            { name: 'limit', in: 'query', schema: { type: 'integer', default: 20 } },
-          ],
-          responses: { '200': { description: 'Code search matches' } },
-        },
-      },
-      '/api/repos/{owner}/{repo}/files': {
-        get: {
-          operationId: 'listDirectory',
-          summary: 'List files and folders at one path',
-          parameters: [ownerParam, repoParam, branchParam, { name: 'path', in: 'query', schema: { type: 'string' } }],
-          responses: { '200': { description: 'Directory listing' } },
-        },
-      },
-      '/api/repos/{owner}/{repo}/files/read': {
-        post: {
-          operationId: 'readMultipleFiles',
-          summary: 'Read up to 12 related files in one request',
-          parameters: [ownerParam, repoParam, branchParam],
-          requestBody: {
-            required: true,
-            content: {
-              'application/json': {
-                schema: {
-                  type: 'object',
-                  properties: { paths: { type: 'array', maxItems: 12, items: { type: 'string' } } },
-                  required: ['paths'],
-                },
-              },
-            },
+      schemas: {
+        RepositoryRef: {
+          type: 'object',
+          properties: {
+            owner: { type: 'string' },
+            repo: { type: 'string' },
+            full_name: { type: 'string' },
           },
-          responses: { '200': { description: 'File contents' } },
+          required: ['owner', 'repo', 'full_name'],
+          additionalProperties: false,
         },
-      },
-      '/api/repos/{owner}/{repo}/file': {
-        get: {
-          operationId: 'readFile',
-          summary: 'Read one file',
-          parameters: [ownerParam, repoParam, branchParam, { name: 'path', in: 'query', required: true, schema: { type: 'string' } }],
-          responses: { '200': { description: 'File content' } },
-        },
-        put: {
-          operationId: 'writeFile',
-          summary: 'Create or update a file and commit it to the selected branch',
-          parameters: [ownerParam, repoParam, branchParam],
-          requestBody: {
-            required: true,
-            content: {
-              'application/json': {
-                schema: {
-                  type: 'object',
-                  properties: {
-                    path: { type: 'string' },
-                    content: { type: 'string' },
-                    message: { type: 'string' },
-                  },
-                  required: ['path', 'content'],
-                },
-              },
-            },
+        ToolError: {
+          type: 'object',
+          properties: {
+            code: { type: 'string' },
+            message: { type: 'string' },
+            retryable: { type: 'boolean' },
+            action_required: { type: 'string' },
           },
-          responses: { '200': { description: 'Commit result' } },
+          required: ['code', 'message', 'retryable', 'action_required'],
+          additionalProperties: false,
         },
-        delete: {
-          operationId: 'deleteFile',
-          summary: 'Delete a file and commit the deletion',
-          parameters: [
-            ownerParam,
-            repoParam,
-            branchParam,
-            { name: 'path', in: 'query', required: true, schema: { type: 'string' } },
-            { name: 'message', in: 'query', schema: { type: 'string' } },
-          ],
-          responses: { '200': { description: 'Deletion result' } },
-        },
-      },
-      '/api/repos/{owner}/{repo}/branches': {
-        get: {
-          operationId: 'listBranches',
-          summary: 'List repository branches',
-          parameters: [ownerParam, repoParam, { name: 'limit', in: 'query', schema: { type: 'integer', default: 30 } }],
-          responses: { '200': { description: 'Branch list' } },
-        },
-        post: {
-          operationId: 'createWorkingBranch',
-          summary: 'Create a working branch before editing main',
-          parameters: [ownerParam, repoParam, branchParam],
-          requestBody: {
-            required: true,
-            content: {
-              'application/json': {
-                schema: {
-                  type: 'object',
-                  properties: { name: { type: 'string' }, from: { type: 'string' } },
-                  required: ['name'],
-                },
-              },
-            },
+        ToolEnvelope: {
+          type: 'object',
+          properties: {
+            ok: { type: 'boolean' },
+            operation_id: { type: 'string' },
+            task_id: { type: 'string' },
+            status: { type: 'string' },
+            project_id: { type: 'string' },
+            repository: { $ref: '#/components/schemas/RepositoryRef' },
+            branch: { type: 'string' },
+            approval_required: { type: 'boolean' },
+            result: { type: 'object', additionalProperties: true },
+            error: { $ref: '#/components/schemas/ToolError' },
           },
-          responses: { '200': { description: 'Created branch' } },
+          required: ['ok', 'operation_id', 'status'],
+          additionalProperties: true,
         },
-      },
-      '/api/repos/{owner}/{repo}/compare': {
-        get: {
-          operationId: 'compareBranches',
-          summary: 'Get unified diff between two branches',
-          parameters: [
-            ownerParam,
-            repoParam,
-            { name: 'base', in: 'query', required: true, schema: { type: 'string' } },
-            { name: 'head', in: 'query', required: true, schema: { type: 'string' } },
-          ],
-          responses: { '200': { description: 'Unified diff' } },
-        },
-      },
-      '/api/repos/{owner}/{repo}/commits': {
-        get: {
-          operationId: 'listCommits',
-          summary: 'List recent commits',
-          parameters: [
-            ownerParam,
-            repoParam,
-            branchParam,
-            { name: 'path', in: 'query', schema: { type: 'string' } },
-            { name: 'limit', in: 'query', schema: { type: 'integer', default: 10 } },
-          ],
-          responses: { '200': { description: 'Commit list' } },
-        },
-      },
-      '/api/repos/{owner}/{repo}/validation': {
-        post: {
-          operationId: 'runValidation',
-          summary: 'Start the validate.yml GitHub Actions workflow',
-          parameters: [ownerParam, repoParam, branchParam],
-          requestBody: {
-            content: {
-              'application/json': {
-                schema: { type: 'object', properties: { branch: { type: 'string' } } },
-              },
-            },
+        HttpError: {
+          type: 'object',
+          properties: {
+            error: { type: 'string' },
           },
-          responses: { '200': { description: 'Validation dispatch result' } },
-        },
-        get: {
-          operationId: 'getValidationStatus',
-          summary: 'Get recent validation workflow runs',
-          parameters: [ownerParam, repoParam, branchParam],
-          responses: { '200': { description: 'Validation run status' } },
-        },
-      },
-      '/api/repos': {
-        post: {
-          operationId: 'createRepository',
-          summary: 'Create a new GitHub repository',
-          requestBody: {
-            required: true,
-            content: {
-              'application/json': {
-                schema: {
-                  type: 'object',
-                  properties: {
-                    name: { type: 'string' },
-                    private: { type: 'boolean' },
-                    description: { type: 'string' },
-                  },
-                  required: ['name'],
-                },
-              },
-            },
-          },
-          responses: { '200': { description: 'Repository created' } },
+          required: ['error'],
+          additionalProperties: false,
         },
       },
     },
+    paths: actionPaths(),
   }
 }

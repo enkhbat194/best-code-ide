@@ -1,3 +1,4 @@
+import { handleActions } from './actions'
 import { handleApprovals } from './approvals'
 import { handleChat } from './chat'
 import { handleFilesCommit } from './files'
@@ -54,10 +55,10 @@ export default {
     const url = new URL(req.url)
 
     if (url.pathname === '/health') {
-      return jsonResponse({ ok: true, build: 'git-delivery-build-v1' })
+      return jsonResponse({ ok: true, build: 'openapi-actions-v1' })
     }
 
-    // Public schema discovery for legacy REST/OpenAPI clients.
+    // Public schema discovery for ChatGPT Custom GPT Actions and REST clients.
     if (url.pathname === '/openapi.json' && req.method === 'GET') {
       return jsonResponse(openapiSpec(url.origin))
     }
@@ -67,6 +68,9 @@ export default {
     if (url.pathname === '/mcp' && (req.method === 'POST' || req.method === 'GET' || req.method === 'DELETE')) {
       return handleMcp(req, env)
     }
+
+    const actionResponse = await handleActions(req, env, url)
+    if (actionResponse) return actionResponse
 
     const approvalResponse = await handleApprovals(req, env, url)
     if (approvalResponse) return approvalResponse
@@ -79,7 +83,7 @@ export default {
     }
 
     if (url.pathname === '/api/chat' && req.method === 'POST') {
-      // The in-app agent is the product's core flow — on by default, opt-out only.
+      // Keep the in-app agent available by default; it can be explicitly disabled.
       if (disabledExplicitly(env.ENABLE_LEGACY_AGENT)) {
         return jsonError('In-app AI agent is disabled by configuration (ENABLE_LEGACY_AGENT=false).', 410)
       }

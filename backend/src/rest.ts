@@ -14,18 +14,17 @@ async function toolResponse(name: string, args: Record<string, unknown>, env: En
 }
 
 function legacyWritesEnabled(env: Env): boolean {
-  // Direct REST writes are part of the simple default flow; opt-out only.
-  return env.ENABLE_LEGACY_REST_WRITES?.trim().toLowerCase() !== 'false'
+  return env.ENABLE_LEGACY_REST_WRITES?.trim().toLowerCase() === 'true'
 }
 
 function legacyWriteDisabled(): Response {
   return jsonError(
-    'Legacy REST write is disabled. Use BestCode MCP staged changes, user approval, repository_commit, and repository_push.',
+    'Legacy REST write is disabled. Use the /api/actions gateway with staged changes, user approval, repository_commit, and repository_push.',
     410,
   )
 }
 
-/** Legacy REST surface. Read operations remain available; direct repository writes are opt-in only. */
+/** Legacy REST surface. Read operations remain available; direct repository writes are explicit opt-in only. */
 export async function handleRest(req: Request, env: Env, url: URL): Promise<Response | null> {
   if (url.pathname === '/api/repos' && req.method === 'POST') {
     if (!legacyWritesEnabled(env)) return legacyWriteDisabled()
