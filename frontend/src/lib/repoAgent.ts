@@ -14,6 +14,7 @@ export interface ApprovalChange {
 
 export interface ApprovalOperation {
   operation_id: string
+  purpose: 'code_change' | 'deployment'
   project_id: string
   repository: { owner: string; repo: string; full_name: string }
   branch: string
@@ -28,6 +29,9 @@ export interface ApprovalOperation {
     | 'commit_prepared'
     | 'pushed'
     | 'pull_request_opened'
+    | 'deployment_started'
+    | 'deployment_completed'
+    | 'deployment_failed'
   approval_required: true
   risk: 'normal' | 'high'
   risk_reasons: string[]
@@ -40,6 +44,8 @@ export interface ApprovalOperation {
   pushed_at?: string
   pr_number?: number
   pr_url?: string
+  deployment_target?: string
+  deployment_task_id?: string
 }
 
 export interface RepositoryTask {
