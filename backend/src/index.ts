@@ -4,6 +4,7 @@ import { handleFilesCommit } from './files'
 import { handleMcp } from './mcp'
 import { openapiSpec } from './openapi'
 import { handleRest } from './rest'
+import { handleTasks } from './tasks'
 import { handleWorkspaceExport } from './workspace'
 import { CORS_HEADERS, jsonError, jsonResponse, resolveSecret } from './utils'
 import type { Env } from './types'
@@ -28,6 +29,10 @@ async function isAuthorized(req: Request, env: Env): Promise<boolean> {
   return difference === 0
 }
 
+function enabled(value: string | undefined): boolean {
+  return value?.trim().toLowerCase() === 'true'
+}
+
 function unauthorized(): Response {
   const response = jsonError('Unauthorized — missing or invalid Bearer token', 401)
   response.headers.set('WWW-Authenticate', 'Bearer realm="BestCode MCP"')
@@ -44,7 +49,7 @@ export default {
     const url = new URL(req.url)
 
     if (url.pathname === '/health') {
-      return jsonResponse({ ok: true, build: 'mcp-safe-write-v1' })
+      return jsonResponse({ ok: true, build: 'git-delivery-build-v1' })
     }
 
     // Public schema discovery for legacy REST/OpenAPI clients.
@@ -61,7 +66,13 @@ export default {
     const approvalResponse = await handleApprovals(req, env, url)
     if (approvalResponse) return approvalResponse
 
+    const taskResponse = await handleTasks(req, env, url)
+    if (taskResponse) return taskResponse
+
     if (url.pathname === '/api/chat' && req.method === 'POST') {
+      if (!enabled(env.ENABLE_LEGACY_AGENT)) {
+        return jsonError('Legacy in-app AI agent is disabled. Use the BestCode MCP connection from ChatGPT or another MCP host.', 410)
+      }
       return handleChat(req, env)
     }
 

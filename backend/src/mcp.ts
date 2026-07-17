@@ -1,3 +1,4 @@
+import { deliveryMcpTools, executeDeliveryMcpTool } from './mcpDeliveryTools'
 import { executeReadOnlyMcpTool, readOnlyMcpTools } from './mcpReadTools'
 import { executeSafeWriteMcpTool, safeWriteMcpTools } from './mcpWriteTools'
 import { resolveSecret } from './utils'
@@ -6,9 +7,10 @@ import type { Env } from './types'
 const LATEST_PROTOCOL_VERSION = '2025-11-25'
 const SUPPORTED_PROTOCOL_VERSIONS = new Set(['2025-11-25', '2025-06-18', '2025-03-26'])
 const DEFAULT_BROWSER_ORIGINS = ['https://chatgpt.com', 'https://chat.openai.com']
-const ALL_MCP_TOOLS = [...readOnlyMcpTools, ...safeWriteMcpTools]
-const READ_ONLY_NAMES = new Set(readOnlyMcpTools.map((tool) => tool.name))
-const SAFE_WRITE_NAMES = new Set(safeWriteMcpTools.map((tool) => tool.name))
+const ALL_MCP_TOOLS = [...readOnlyMcpTools, ...safeWriteMcpTools, ...deliveryMcpTools]
+const READ_ONLY_NAMES = new Set<string>(readOnlyMcpTools.map((tool) => tool.name))
+const SAFE_WRITE_NAMES = new Set<string>(safeWriteMcpTools.map((tool) => tool.name))
+const DELIVERY_NAMES = new Set<string>(deliveryMcpTools.map((tool) => tool.name))
 
 interface JsonRpcMessage {
   jsonrpc: '2.0'
@@ -20,17 +22,11 @@ interface JsonRpcMessage {
 }
 
 function jsonHeaders(extra: HeadersInit = {}): HeadersInit {
-  return {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Cache-Control': 'no-store',
-    ...extra,
-  }
+  return { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...extra }
 }
 
 function rpcResponse(id: string | number | null | undefined, result: unknown, headers: HeadersInit = {}): Response {
-  return new Response(JSON.stringify({ jsonrpc: '2.0', id: id ?? null, result }), {
-    headers: jsonHeaders(headers),
-  })
+  return new Response(JSON.stringify({ jsonrpc: '2.0', id: id ?? null, result }), { headers: jsonHeaders(headers) })
 }
 
 function rpcError(
@@ -47,17 +43,13 @@ function rpcError(
 }
 
 function allowedOrigins(req: Request, env: Env): Set<string> {
-  const configured = (env.MCP_ALLOWED_ORIGINS ?? '')
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean)
+  const configured = (env.MCP_ALLOWED_ORIGINS ?? '').split(',').map((item) => item.trim()).filter(Boolean)
   return new Set([new URL(req.url).origin, ...DEFAULT_BROWSER_ORIGINS, ...configured])
 }
 
 function validateOrigin(req: Request, env: Env): Response | null {
   const origin = req.headers.get('Origin')
-  if (!origin) return null
-  if (allowedOrigins(req, env).has(origin)) return null
+  if (!origin || allowedOrigins(req, env).has(origin)) return null
   return rpcError(undefined, -32001, 'Forbidden origin', 403, {
     code: 'ORIGIN_NOT_ALLOWED',
     action_required: 'Add the exact trusted origin to MCP_ALLOWED_ORIGINS in Cloudflare configuration.',
@@ -77,8 +69,9 @@ function validateAccept(req: Request): Response | null {
   const accept = req.headers.get('Accept') ?? ''
   const acceptsJson = accept.includes('application/json') || accept.includes('*/*')
   const acceptsEvents = accept.includes('text/event-stream') || accept.includes('*/*')
-  if (acceptsJson && acceptsEvents) return null
-  return rpcError(undefined, -32600, 'MCP POST requests must accept application/json and text/event-stream', 406)
+  return acceptsJson && acceptsEvents
+    ? null
+    : rpcError(undefined, -32600, 'MCP POST requests must accept application/json and text/event-stream', 406)
 }
 
 function isNotification(message: JsonRpcMessage): boolean {
@@ -126,15 +119,9 @@ export async function handleMcp(req: Request, env: Env): Promise<Response> {
   if (originError) return originError
 
   if (req.method === 'GET' || req.method === 'DELETE') {
-    return new Response(null, {
-      status: 405,
-      headers: { Allow: 'POST, GET', 'Cache-Control': 'no-store' },
-    })
+    return new Response(null, { status: 405, headers: { Allow: 'POST, GET', 'Cache-Control': 'no-store' } })
   }
-
-  if (req.method !== 'POST') {
-    return new Response(null, { status: 405, headers: { Allow: 'POST, GET' } })
-  }
+  if (req.method !== 'POST') return new Response(null, { status: 405, headers: { Allow: 'POST, GET' } })
 
   const acceptError = validateAccept(req)
   if (acceptError) return acceptError
@@ -156,30 +143,23 @@ export async function handleMcp(req: Request, env: Env): Promise<Response> {
 
   const protocolError = validateProtocolVersion(req, message.method)
   if (protocolError) return protocolError
-
-  if (isNotification(message)) {
-    return new Response(null, { status: 202, headers: { 'Cache-Control': 'no-store' } })
-  }
+  if (isNotification(message)) return new Response(null, { status: 202, headers: { 'Cache-Control': 'no-store' } })
 
   switch (message.method) {
     case 'initialize': {
       const protocolVersion = negotiatedVersion(message.params)
-      return rpcResponse(
-        message.id,
-        {
-          protocolVersion,
-          capabilities: { tools: { listChanged: false } },
-          serverInfo: {
-            name: 'bestcode-repository-controller',
-            title: 'BestCode Repository Controller',
-            version: '0.4.0',
-            description: 'Project-scoped repository controller with read tools and approval-gated staged writes.',
-          },
-          instructions:
-            'Use projects_list first. Create an agent/<task> branch before staging changes. repository_write_file, repository_apply_patch, and repository_delete_file only create pending approval operations; they never commit or push. The AI cannot approve its own operation.',
+      return rpcResponse(message.id, {
+        protocolVersion,
+        capabilities: { tools: { listChanged: false } },
+        serverInfo: {
+          name: 'bestcode-repository-controller',
+          title: 'BestCode Repository Controller',
+          version: '0.5.0',
+          description: 'Project-scoped repository controller with approval-gated Git delivery and GitHub Actions tasks.',
         },
-        { 'MCP-Protocol-Version': protocolVersion },
-      )
+        instructions:
+          'Use projects_list first. Work on agent/<task>. Stage changes, wait for user approval, call repository_commit then repository_push, run build_start and test_start, inspect status/logs, then create a draft pull request. Never bypass approval or main protection.',
+      }, { 'MCP-Protocol-Version': protocolVersion })
     }
 
     case 'ping':
@@ -192,7 +172,7 @@ export async function handleMcp(req: Request, env: Env): Promise<Response> {
       const name = typeof message.params?.name === 'string' ? message.params.name : ''
       const args = message.params?.arguments
       if (!name) return rpcError(message.id, -32602, 'Missing tool name')
-      if (!READ_ONLY_NAMES.has(name as never) && !SAFE_WRITE_NAMES.has(name as never)) {
+      if (!READ_ONLY_NAMES.has(name) && !SAFE_WRITE_NAMES.has(name) && !DELIVERY_NAMES.has(name)) {
         return rpcError(message.id, -32602, `Unknown MCP tool: ${name}`)
       }
       if (args !== undefined && (!args || typeof args !== 'object' || Array.isArray(args))) {
@@ -204,9 +184,11 @@ export async function handleMcp(req: Request, env: Env): Promise<Response> {
 
       const startedAt = Date.now()
       const toolArgs = (args as Record<string, unknown> | undefined) ?? {}
-      const result = READ_ONLY_NAMES.has(name as never)
+      const result = READ_ONLY_NAMES.has(name)
         ? await executeReadOnlyMcpTool(name, toolArgs, githubToken, env)
-        : await executeSafeWriteMcpTool(name, toolArgs, githubToken, env)
+        : SAFE_WRITE_NAMES.has(name)
+          ? await executeSafeWriteMcpTool(name, toolArgs, githubToken, env)
+          : await executeDeliveryMcpTool(name, toolArgs, githubToken, env)
 
       console.log(JSON.stringify({
         event: 'mcp_tool_call',
