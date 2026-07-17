@@ -3,8 +3,8 @@ import { executeTool } from './tools'
 import { jsonError, resolveSecret, CORS_HEADERS } from './utils'
 import type { ChatCompletionMessage, Env, RepoContext, Role } from './types'
 
-const MAX_TOOL_ITERATIONS = 12
-const MAX_RESULT_CHARS = 12000
+const MAX_TOOL_ITERATIONS = 24
+const MAX_RESULT_CHARS = 20_000
 
 interface ChatRequestBody {
   messages: { role: string; content: string }[]
@@ -45,23 +45,30 @@ export async function handleChat(req: Request, env: Env): Promise<Response> {
           return
         }
 
-        const systemPrompt = `You are Best Code IDE Agent, a repository-aware software engineering agent running inside a mobile IDE.
+        const systemPrompt = `You are Best Code IDE Agent, an autonomous repository-aware software engineering agent running inside a mobile IDE.
 Current model provider: DeepSeek. Never claim that you are Claude, ChatGPT, Codex, Gemini, or another provider.
 Selected repository: ${owner}/${repo}
-Selected branch: ${branch}
+Initial branch: ${branch}
 
-Your job is to inspect, modify, validate, and explain code using the provided repository tools.
+Your job is to inspect, modify, validate, repair, and explain code with the available tools. Operate like a careful coding agent, not a conversational code generator.
+
 Mandatory workflow for non-trivial coding tasks:
-1. Inspect the repository structure with list_tree or list_files.
-2. Locate relevant code with search_code.
-3. Read the current files before editing; use read_files for related files.
-4. If the selected branch is main or master, create a working branch named agent/<short-task> before making broad or risky changes, then tell the user to switch the app branch setting. Do not pretend that the selected branch changed automatically.
-5. Make minimal, coherent edits. Never say a file was changed unless write_file/delete_file confirms it.
-6. Compare the working branch against its base with compare_branches.
-7. Run validation when validate.yml exists, then check validation_status.
-8. Report exactly what was verified and what remains unverified.
+1. Inspect the repository with list_tree, then locate relevant code with search_code.
+2. Read all related files before editing; prefer read_files for a coherent set.
+3. If the current branch is main or master, create_branch with agent/<short-task>. The app and this agent session switch automatically to the new branch.
+4. Plan one coherent change. Use commit_files to write all related files in one atomic commit. Use write_file only for a genuinely isolated one-file fix.
+5. Compare the working branch against main/master with compare_branches and inspect the actual diff.
+6. After each coding commit, call wait_validation. If validation fails, use the returned failed job logs to find the real cause, read the relevant files, make a repair commit, and validate again.
+7. Perform at most two autonomous repair attempts per user request. If it still fails, stop and report the exact remaining error.
+8. Create a draft pull request only when the user asks to publish/open a PR, or when the user explicitly asked you to finish the change end-to-end. Never merge.
+9. Report exact branch, commits, validation result, and unverified items.
 
-Do not fabricate file contents, command output, build results, commits, or deployment status. Keep prose concise, but use tools thoroughly.`
+Safety and truthfulness:
+- Direct AI writes to main/master are blocked. Do not try to bypass this.
+- Never claim a file, branch, commit, validation, deployment, or PR exists unless the corresponding tool confirmed it.
+- Do not fabricate command output or file contents.
+- Keep user-facing prose concise, but use tools thoroughly.
+- When a tool reports an error, diagnose it instead of pretending the task succeeded.`
 
         const safeClientMessages = clientMessages
           .filter((message) => message && typeof message.content === 'string' && message.content.trim())
@@ -85,13 +92,14 @@ Do not fabricate file contents, command output, build results, commits, or deplo
             try {
               args = JSON.parse(tc.function.arguments || '{}')
             } catch {
-              // The model supplied malformed arguments; executeTool will return a useful validation error.
+              // executeTool will return a useful validation error for malformed arguments.
             }
 
             send({ type: 'tool_call', id: tc.id, name: tc.function.name, args })
 
             let result: string
             let isError = false
+            const branchBeforeTool = ctx.branch
             try {
               result = await executeTool(tc.function.name, args, githubToken, ctx)
             } catch (err) {
@@ -99,12 +107,15 @@ Do not fabricate file contents, command output, build results, commits, or deplo
               isError = true
             }
 
+            if (ctx.branch !== branchBeforeTool) {
+              send({ type: 'branch_changed', branch: ctx.branch })
+            }
             send({ type: 'tool_result', id: tc.id, result: result.slice(0, MAX_RESULT_CHARS), error: isError })
             messages.push({ role: 'tool', tool_call_id: tc.id, content: result })
           }
         }
 
-        send({ type: 'done' })
+        send({ type: 'done', branch: ctx.branch })
       } catch (err) {
         send({ type: 'error', message: err instanceof Error ? err.message : String(err) })
       } finally {
