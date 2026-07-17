@@ -5,6 +5,62 @@
   min-height: 0;
 }
 
+.agentHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+  flex-shrink: 0;
+}
+
+.agentIdentity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.agentIdentity div {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.agentIdentity strong {
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.agentIdentity span,
+.repoContext {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.repoContext {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  min-width: 0;
+}
+
+.repoContext > span:first-child {
+  max-width: 46vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+}
+
+.branch {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
 .messages {
   flex: 1;
   min-height: 0;
@@ -19,6 +75,7 @@
   text-align: center;
   color: var(--text-dim);
   padding: 24px;
+  max-width: 420px;
 }
 
 .bubbleRow {
@@ -86,7 +143,7 @@
 .toolResult {
   margin-top: 4px;
   color: var(--text-dim);
-  max-height: 120px;
+  max-height: 180px;
   overflow-y: auto;
   white-space: pre-wrap;
 }
