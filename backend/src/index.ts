@@ -4,6 +4,7 @@ import { handleFilesCommit } from './files'
 import { handleMcp } from './mcp'
 import { openapiSpec } from './openapi'
 import { handleRest } from './rest'
+import { handleTasks } from './tasks'
 import { handleWorkspaceExport } from './workspace'
 import { CORS_HEADERS, jsonError, jsonResponse, resolveSecret } from './utils'
 import type { Env } from './types'
@@ -44,7 +45,7 @@ export default {
     const url = new URL(req.url)
 
     if (url.pathname === '/health') {
-      return jsonResponse({ ok: true, build: 'mcp-safe-write-v1' })
+      return jsonResponse({ ok: true, build: 'git-delivery-build-v1' })
     }
 
     // Public schema discovery for legacy REST/OpenAPI clients.
@@ -60,6 +61,9 @@ export default {
 
     const approvalResponse = await handleApprovals(req, env, url)
     if (approvalResponse) return approvalResponse
+
+    const taskResponse = await handleTasks(req, env, url)
+    if (taskResponse) return taskResponse
 
     if (url.pathname === '/api/chat' && req.method === 'POST') {
       return handleChat(req, env)
