@@ -1,3 +1,4 @@
+import { handleApprovals } from './approvals'
 import { handleChat } from './chat'
 import { handleFilesCommit } from './files'
 import { handleMcp } from './mcp'
@@ -6,6 +7,8 @@ import { handleRest } from './rest'
 import { handleWorkspaceExport } from './workspace'
 import { CORS_HEADERS, jsonError, jsonResponse, resolveSecret } from './utils'
 import type { Env } from './types'
+
+export { ApprovalStore } from './approvalStore'
 
 async function digest(value: string): Promise<Uint8Array> {
   return new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)))
@@ -41,7 +44,7 @@ export default {
     const url = new URL(req.url)
 
     if (url.pathname === '/health') {
-      return jsonResponse({ ok: true, build: 'mcp-readonly-v1' })
+      return jsonResponse({ ok: true, build: 'mcp-safe-write-v1' })
     }
 
     // Public schema discovery for legacy REST/OpenAPI clients.
@@ -54,6 +57,9 @@ export default {
     if (url.pathname === '/mcp' && (req.method === 'POST' || req.method === 'GET' || req.method === 'DELETE')) {
       return handleMcp(req, env)
     }
+
+    const approvalResponse = await handleApprovals(req, env, url)
+    if (approvalResponse) return approvalResponse
 
     if (url.pathname === '/api/chat' && req.method === 'POST') {
       return handleChat(req, env)
