@@ -44,8 +44,8 @@ export function ChatView() {
         {messages.length === 0 && (
           <div className={styles.empty}>
             {configured
-              ? 'Repository-г шалгах, код хайх, олон файл унших, working branch үүсгэх, засварлах, diff болон validation шалгах даалгавар өгнө үү.'
-              : 'Эхлээд Settings tab-д backend URL, token, GitHub owner, repo, branch-аа бүрэн тохируулна уу.'}
+              ? 'Даалгавраа бичээрэй — жишээ нь "hello.html үүсгээд hello world харуул". Файлууд Files tab-д үүсэж, Preview tab-аар шууд ажиллана. GitHub руу зөвхөн "push хий" гэсэн үед л илгээнэ.'
+              : 'Эхлээд Settings tab-с backend URL болон token-оо тохируулна уу.'}
           </div>
         )}
         {messages.map((message) => (

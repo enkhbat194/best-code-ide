@@ -1,6 +1,7 @@
 import { handleApprovals } from './approvals'
 import { handleChat } from './chat'
 import { handleFilesCommit } from './files'
+import { handleLlm } from './llm'
 import { handleMcp } from './mcp'
 import { openapiSpec } from './openapi'
 import { handleRest } from './rest'
@@ -68,6 +69,10 @@ export default {
 
     const taskResponse = await handleTasks(req, env, url)
     if (taskResponse) return taskResponse
+
+    if (url.pathname === '/api/llm' && req.method === 'POST') {
+      return handleLlm(req, env)
+    }
 
     if (url.pathname === '/api/chat' && req.method === 'POST') {
       // The in-app agent is the product's core flow — on by default, opt-out only.
