@@ -13,9 +13,21 @@ async function toolResponse(name: string, args: Record<string, unknown>, env: En
   }
 }
 
-/** REST surface used by the mobile IDE, ChatGPT Actions, and other external AI clients. */
+function legacyWritesEnabled(env: Env): boolean {
+  return env.ENABLE_LEGACY_REST_WRITES?.trim().toLowerCase() === 'true'
+}
+
+function legacyWriteDisabled(): Response {
+  return jsonError(
+    'Legacy REST write is disabled. Use BestCode MCP staged changes, user approval, repository_commit, and repository_push.',
+    410,
+  )
+}
+
+/** Legacy REST surface. Read operations remain available; direct repository writes are opt-in only. */
 export async function handleRest(req: Request, env: Env, url: URL): Promise<Response | null> {
   if (url.pathname === '/api/repos' && req.method === 'POST') {
+    if (!legacyWritesEnabled(env)) return legacyWriteDisabled()
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>
     return toolResponse('create_repo', body, env, { owner: '', repo: '', branch: '' })
   }
@@ -56,17 +68,20 @@ export async function handleRest(req: Request, env: Env, url: URL): Promise<Resp
   }
 
   if (sub === '/file' && req.method === 'PUT') {
+    if (!legacyWritesEnabled(env)) return legacyWriteDisabled()
     const body = (await req.json().catch(() => ({}))) as { path?: string; content?: string; message?: string }
     if (!body.path) return jsonError('path is required in body')
     return toolResponse('write_file', body, env, ctx)
   }
 
   if (sub === '/files/commit' && req.method === 'POST') {
+    if (!legacyWritesEnabled(env)) return legacyWriteDisabled()
     const body = (await req.json().catch(() => ({}))) as { message?: string; changes?: unknown[] }
     return toolResponse('commit_files', body, env, ctx)
   }
 
   if (sub === '/file' && req.method === 'DELETE') {
+    if (!legacyWritesEnabled(env)) return legacyWriteDisabled()
     const path = url.searchParams.get('path') ?? ''
     const message = url.searchParams.get('message') ?? undefined
     return toolResponse('delete_file', { path, message }, env, ctx)
@@ -77,6 +92,7 @@ export async function handleRest(req: Request, env: Env, url: URL): Promise<Resp
   }
 
   if (sub === '/branches' && req.method === 'POST') {
+    if (!legacyWritesEnabled(env)) return legacyWriteDisabled()
     const body = (await req.json().catch(() => ({}))) as { name?: string; from?: string }
     return toolResponse('create_branch', body, env, ctx)
   }
@@ -117,6 +133,7 @@ export async function handleRest(req: Request, env: Env, url: URL): Promise<Resp
   }
 
   if (sub === '/pulls' && req.method === 'POST') {
+    if (!legacyWritesEnabled(env)) return legacyWriteDisabled()
     const body = (await req.json().catch(() => ({}))) as {
       title?: string
       head?: string
