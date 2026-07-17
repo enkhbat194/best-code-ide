@@ -1,0 +1,11 @@
+name = "best-code-ide-api"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+
+# Secrets (never put values here — set with `wrangler secret put <NAME>`):
+#   DEEPSEEK_API_KEY  DeepSeek platform API key
+#   GITHUB_TOKEN      GitHub fine-grained PAT, Contents: Read & write on the target repo(s)
+#   AUTH_TOKEN        Bearer token this app/any AI chat must send to use the API
+
+[observability]
+enabled = true
