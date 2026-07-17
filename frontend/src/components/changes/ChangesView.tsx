@@ -1,12 +1,15 @@
-import { useMemo, useState } from 'react'
-import { GitCompare, PlayCircle, RefreshCw, GitPullRequest } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { GitCompare, PlayCircle, RefreshCw, GitPullRequest, ShieldCheck, ShieldX } from 'lucide-react'
 import { useSettingsStore } from '../../store/settingsStore'
 import {
   compareBranches,
   createDraftPullRequest,
+  decideApproval,
+  listApprovals,
   runValidation,
   validationStatus,
   waitValidation,
+  type ApprovalOperation,
 } from '../../lib/repoAgent'
 import styles from './ChangesView.module.css'
 
@@ -21,6 +24,7 @@ export function ChangesView() {
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [approvals, setApprovals] = useState<ApprovalOperation[]>([])
 
   const protectedBranch = branch === 'main' || branch === 'master'
   const defaultTitle = useMemo(() => title || `Update ${repo || 'project'}`, [repo, title])
@@ -38,6 +42,15 @@ export function ChangesView() {
     }
   }
 
+  async function refreshApprovals() {
+    setApprovals(await listApprovals('pending_approval'))
+  }
+
+  useEffect(() => {
+    if (!owner || !repo) return
+    void refreshApprovals().catch((err) => setError(err instanceof Error ? err.message : String(err)))
+  }, [owner, repo])
+
   return (
     <div className={styles.wrap}>
       <header className={styles.header}>
@@ -53,6 +66,73 @@ export function ChangesView() {
           AI main/master дээр шууд код бичихгүй. Chat-аар coding task өгөхөд working branch автоматаар үүсгэнэ.
         </div>
       )}
+
+      <section className={styles.section}>
+        <div className={styles.sectionHeading}>
+          <h2><ShieldCheck size={16} /> Approval requests</h2>
+          <button
+            className={styles.compact}
+            disabled={busy}
+            onClick={() => execute(async () => {
+              await refreshApprovals()
+              setStatus('Approval жагсаалт шинэчлэгдлээ.')
+            })}
+          >
+            <RefreshCw size={14} /> Шинэчлэх
+          </button>
+        </div>
+
+        {approvals.length === 0 && <div className={styles.muted}>Хүлээгдэж байгаа approval алга.</div>}
+        <div className={styles.approvalList}>
+          {approvals.map((operation) => (
+            <article key={operation.operation_id} className={styles.approvalCard}>
+              <div className={styles.approvalTop}>
+                <div>
+                  <strong>{operation.title}</strong>
+                  <span>{operation.branch} · {operation.operation_id}</span>
+                </div>
+                <span className={`${styles.risk} ${operation.risk === 'high' ? styles.highRisk : ''}`}>
+                  {operation.risk === 'high' ? 'Өндөр эрсдэл' : 'Ердийн'}
+                </span>
+              </div>
+              <p>{operation.summary}</p>
+              {operation.risk_reasons.length > 0 && (
+                <div className={styles.reasons}>{operation.risk_reasons.join(' · ')}</div>
+              )}
+              {operation.changes.map((change) => (
+                <div key={`${operation.operation_id}:${change.path}`}>
+                  <div className={styles.changeMeta}>{change.action.toUpperCase()} · {change.path}</div>
+                  <pre className={styles.output}>{change.diff}</pre>
+                </div>
+              ))}
+              <div className={styles.actions}>
+                <button
+                  className={styles.primary}
+                  disabled={busy}
+                  onClick={() => execute(async () => {
+                    await decideApproval(operation.operation_id, 'approved')
+                    await refreshApprovals()
+                    setStatus(`Approved: ${operation.operation_id}`)
+                  })}
+                >
+                  <ShieldCheck size={14} /> Approve
+                </button>
+                <button
+                  className={styles.danger}
+                  disabled={busy}
+                  onClick={() => execute(async () => {
+                    await decideApproval(operation.operation_id, 'rejected')
+                    await refreshApprovals()
+                    setStatus(`Rejected: ${operation.operation_id}`)
+                  })}
+                >
+                  <ShieldX size={14} /> Reject
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
 
       <section className={styles.section}>
         <h2><GitCompare size={16} /> Branch diff</h2>
@@ -75,7 +155,7 @@ export function ChangesView() {
         >
           <RefreshCw size={14} /> Diff шинэчлэх
         </button>
-        <pre className={styles.output}>{diff || 'Working branch үүсэж, өөрчлөлт орсны дараа diff энд харагдана.'}</pre>
+        <pre className={styles.output}>{diff || 'Working branch үүсэж, өөрчлөлт commit болсны дараа branch diff энд харагдана.'}</pre>
       </section>
 
       <section className={styles.section}>
