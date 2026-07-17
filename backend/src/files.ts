@@ -47,18 +47,33 @@ export async function handleFilesCommit(req: Request, env: Env): Promise<Respons
   const repo = body.repo?.trim()
   const branch = body.branch?.trim() || 'main'
   if (!owner || !repo || !body.path) return jsonError('owner, repo, and path are required')
-  if (isProtectedBranch(branch)) {
-    return jsonError('Direct changes to main/master are blocked. Create and select a working branch first.', 409)
-  }
   if (typeof body.content !== 'string' || body.content.length > 500_000) {
     return jsonError('content must be UTF-8 text no larger than 500000 characters')
   }
 
-  const project = listProjects(env).find((item) => item.owner === owner && item.repo === repo)
-  if (!project) return jsonError('Repository is not present in the approved project registry', 403)
-
   const githubToken = resolveSecret(env, 'GITHUB_TOKEN')
   if (!githubToken) return jsonError('GITHUB_TOKEN secret is missing', 500)
+
+  // Default flow is Replit-style: commit straight to the selected branch.
+  // Set REQUIRE_APPROVALS=true to switch to the staged approval workflow below.
+  const approvalsRequired = env.REQUIRE_APPROVALS?.trim().toLowerCase() === 'true'
+  if (!approvalsRequired) {
+    try {
+      const path = normalizePath(body.path)
+      const message = (body.message?.trim() || `Update ${path} from mobile app`).slice(0, 160)
+      const result = await gh.putFile(githubToken, owner, repo, path, body.content, message, branch)
+      return jsonResponse({ ok: true, status: 'committed', approvalRequired: false, branch, commitUrl: result.commitUrl })
+    } catch (err) {
+      return jsonError(err instanceof Error ? err.message : String(err), 502)
+    }
+  }
+
+  if (isProtectedBranch(branch)) {
+    return jsonError('Direct changes to main/master are blocked. Create and select a working branch first.', 409)
+  }
+
+  const project = listProjects(env).find((item) => item.owner === owner && item.repo === repo)
+  if (!project) return jsonError('Repository is not present in the approved project registry', 403)
 
   try {
     const path = normalizePath(body.path)

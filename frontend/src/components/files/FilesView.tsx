@@ -44,11 +44,15 @@ export function FilesView() {
                   content: openContent,
                   message: `Update ${openPath} from mobile workspace`,
                 })
-                const riskText = result.risk === 'high' ? ' Өндөр эрсдэлтэй өөрчлөлт гэж тэмдэглэгдсэн.' : ''
-                setPushStatus({
-                  kind: 'ok',
-                  text: `Өөрчлөлт approval-д орлоо. ID: ${result.operationId}.${riskText}`,
-                })
+                if (result.approvalRequired) {
+                  const riskText = result.risk === 'high' ? ' Өндөр эрсдэлтэй өөрчлөлт гэж тэмдэглэгдсэн.' : ''
+                  setPushStatus({
+                    kind: 'ok',
+                    text: `Өөрчлөлт approval-д орлоо. ID: ${result.operationId}.${riskText} Changes tab-с батлаарай.`,
+                  })
+                } else {
+                  setPushStatus({ kind: 'ok', text: `GitHub рүү commit хийгдлээ ✓ (${result.branch})` })
+                }
               } catch (err) {
                 setPushStatus({ kind: 'err', text: err instanceof Error ? err.message : String(err) })
               } finally {
@@ -56,7 +60,7 @@ export function FilesView() {
               }
             }}
           >
-            <UploadCloud size={14} /> Approval
+            <UploadCloud size={14} /> Push
           </button>
         </div>
         {pushStatus && <div className={`${styles.status} ${pushStatus.kind === 'ok' ? styles.ok : styles.err}`}>{pushStatus.text}</div>}

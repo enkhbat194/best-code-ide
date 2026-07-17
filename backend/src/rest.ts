@@ -14,7 +14,8 @@ async function toolResponse(name: string, args: Record<string, unknown>, env: En
 }
 
 function legacyWritesEnabled(env: Env): boolean {
-  return env.ENABLE_LEGACY_REST_WRITES?.trim().toLowerCase() === 'true'
+  // Direct REST writes are part of the simple default flow; opt-out only.
+  return env.ENABLE_LEGACY_REST_WRITES?.trim().toLowerCase() !== 'false'
 }
 
 function legacyWriteDisabled(): Response {

@@ -1,8 +1,9 @@
-import { FolderCode, GitCompare, Play, Settings } from 'lucide-react'
+import { FolderCode, GitCompare, MessageSquare, Play, Settings } from 'lucide-react'
 import styles from './TabBar.module.css'
 import type { Tab } from '../../App'
 
 const TABS: { id: Tab; label: string; icon: typeof FolderCode }[] = [
+  { id: 'chat', label: 'Chat', icon: MessageSquare },
   { id: 'files', label: 'Files', icon: FolderCode },
   { id: 'changes', label: 'Changes', icon: GitCompare },
   { id: 'preview', label: 'Preview', icon: Play },

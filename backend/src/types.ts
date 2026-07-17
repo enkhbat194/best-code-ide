@@ -6,6 +6,7 @@ export interface Env {
   MCP_ALLOWED_ORIGINS?: string
   ENABLE_LEGACY_AGENT?: string
   ENABLE_LEGACY_REST_WRITES?: string
+  REQUIRE_APPROVALS?: string
   APPROVALS: DurableObjectNamespace
 }
 

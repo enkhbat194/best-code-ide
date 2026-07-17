@@ -29,8 +29,8 @@ async function isAuthorized(req: Request, env: Env): Promise<boolean> {
   return difference === 0
 }
 
-function enabled(value: string | undefined): boolean {
-  return value?.trim().toLowerCase() === 'true'
+function disabledExplicitly(value: string | undefined): boolean {
+  return value?.trim().toLowerCase() === 'false'
 }
 
 function unauthorized(): Response {
@@ -70,8 +70,9 @@ export default {
     if (taskResponse) return taskResponse
 
     if (url.pathname === '/api/chat' && req.method === 'POST') {
-      if (!enabled(env.ENABLE_LEGACY_AGENT)) {
-        return jsonError('Legacy in-app AI agent is disabled. Use the BestCode MCP connection from ChatGPT or another MCP host.', 410)
+      // The in-app agent is the product's core flow — on by default, opt-out only.
+      if (disabledExplicitly(env.ENABLE_LEGACY_AGENT)) {
+        return jsonError('In-app AI agent is disabled by configuration (ENABLE_LEGACY_AGENT=false).', 410)
       }
       return handleChat(req, env)
     }
