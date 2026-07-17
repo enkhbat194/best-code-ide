@@ -1,4 +1,4 @@
-import type { ApprovalOperation } from './approvalStore'
+import type { ApprovalOperation, TaskRecord } from './approvalStore'
 import type { Env } from './types'
 
 function stub(env: Env): DurableObjectStub {
@@ -17,10 +17,7 @@ async function request<T>(env: Env, path: string, init: RequestInit = {}): Promi
 }
 
 export async function createApproval(env: Env, operation: ApprovalOperation): Promise<ApprovalOperation> {
-  return request<ApprovalOperation>(env, '/operations', {
-    method: 'POST',
-    body: JSON.stringify(operation),
-  })
+  return request<ApprovalOperation>(env, '/operations', { method: 'POST', body: JSON.stringify(operation) })
 }
 
 export async function getApproval(env: Env, operationId: string): Promise<ApprovalOperation> {
@@ -51,19 +48,57 @@ export async function decideApproval(
 }
 
 export async function cancelApproval(env: Env, operationId: string): Promise<ApprovalOperation> {
-  return request<ApprovalOperation>(env, `/operations/${encodeURIComponent(operationId)}/cancel`, {
+  return request<ApprovalOperation>(env, `/operations/${encodeURIComponent(operationId)}/cancel`, { method: 'POST' })
+}
+
+export async function markCommitPrepared(
+  env: Env,
+  operationId: string,
+  input: { parentSha: string; commitSha: string; commitUrl?: string },
+): Promise<ApprovalOperation> {
+  return request<ApprovalOperation>(env, `/operations/${encodeURIComponent(operationId)}/prepared`, {
     method: 'POST',
+    body: JSON.stringify({ parent_sha: input.parentSha, commit_sha: input.commitSha, commit_url: input.commitUrl }),
   })
 }
 
-export async function markApprovalCommitted(
+export async function markPushed(env: Env, operationId: string): Promise<ApprovalOperation> {
+  return request<ApprovalOperation>(env, `/operations/${encodeURIComponent(operationId)}/pushed`, { method: 'POST' })
+}
+
+export async function markPullRequest(
   env: Env,
   operationId: string,
-  commitSha: string,
-  commitUrl?: string,
+  input: { number: number; url: string },
 ): Promise<ApprovalOperation> {
-  return request<ApprovalOperation>(env, `/operations/${encodeURIComponent(operationId)}/committed`, {
+  return request<ApprovalOperation>(env, `/operations/${encodeURIComponent(operationId)}/pull-request`, {
     method: 'POST',
-    body: JSON.stringify({ commit_sha: commitSha, commit_url: commitUrl }),
+    body: JSON.stringify(input),
+  })
+}
+
+export async function createTask(env: Env, task: TaskRecord): Promise<TaskRecord> {
+  return request<TaskRecord>(env, '/tasks', { method: 'POST', body: JSON.stringify(task) })
+}
+
+export async function getTask(env: Env, taskId: string): Promise<TaskRecord> {
+  return request<TaskRecord>(env, `/tasks/${encodeURIComponent(taskId)}`)
+}
+
+export async function listTasks(
+  env: Env,
+  filters: { kind?: string; projectId?: string; limit?: number } = {},
+): Promise<{ items: TaskRecord[]; count: number; total: number }> {
+  const query = new URLSearchParams()
+  if (filters.kind) query.set('kind', filters.kind)
+  if (filters.projectId) query.set('project_id', filters.projectId)
+  if (filters.limit) query.set('limit', String(filters.limit))
+  return request(env, `/tasks?${query.toString()}`)
+}
+
+export async function updateTask(env: Env, taskId: string, update: Partial<TaskRecord>): Promise<TaskRecord> {
+  return request<TaskRecord>(env, `/tasks/${encodeURIComponent(taskId)}/update`, {
+    method: 'POST',
+    body: JSON.stringify(update),
   })
 }
