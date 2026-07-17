@@ -27,8 +27,8 @@ function publicOperation(operation: ApprovalOperation) {
     expires_at: operation.expires_at,
     decided_at: operation.decided_at,
     decision_actor: operation.decision_actor,
-    commit_sha: operation.commit_sha,
-    commit_url: operation.commit_url,
+    commit_sha: operation.prepared_commit_sha,
+    commit_url: operation.prepared_commit_url,
   }
 }
 

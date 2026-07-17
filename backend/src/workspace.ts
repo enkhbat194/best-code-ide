@@ -67,8 +67,11 @@ export async function handleWorkspaceExport(req: Request, env: Env): Promise<Res
         }),
       )
       for (const result of results) {
-        if ('content' in result) files.push({ path: result.path, content: result.content })
-        else errors.push({ path: result.path, error: result.error })
+        if ('content' in result && typeof result.content === 'string') {
+          files.push({ path: result.path, content: result.content })
+        } else {
+          errors.push({ path: result.path, error: 'error' in result ? result.error : 'File not found' })
+        }
       }
     }
 
