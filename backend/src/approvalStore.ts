@@ -51,6 +51,7 @@ export interface TaskRecord {
   task_id: string
   kind: TaskKind
   project_id: string
+  operation_id?: string
   repository: { owner: string; repo: string; full_name: string }
   branch: string
   workflow: string
@@ -232,6 +233,7 @@ export class ApprovalStore {
     if (request.method === 'POST' && url.pathname === '/tasks') {
       const task = (await request.json().catch(() => null)) as TaskRecord | null
       if (!task || !validId(task.task_id)) return json({ error: 'A valid task_id is required' }, 400)
+      if (task.operation_id && !validId(task.operation_id)) return json({ error: 'Invalid operation_id' }, 400)
       if (await this.state.storage.get(taskKey(task.task_id))) return json({ error: 'Task already exists' }, 409)
       await this.state.storage.put(taskKey(task.task_id), task)
       return json(task, 201)
@@ -241,9 +243,14 @@ export class ApprovalStore {
       const limit = Math.min(Math.max(Number(url.searchParams.get('limit') ?? '50'), 1), 100)
       const kind = url.searchParams.get('kind')
       const projectId = url.searchParams.get('project_id')
+      const operationId = url.searchParams.get('operation_id')
       const values = await this.state.storage.list<TaskRecord>({ prefix: 'task:' })
       const tasks = [...values.values()]
-        .filter((task) => (!kind || task.kind === kind) && (!projectId || task.project_id === projectId))
+        .filter((task) =>
+          (!kind || task.kind === kind) &&
+          (!projectId || task.project_id === projectId) &&
+          (!operationId || task.operation_id === operationId),
+        )
         .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
       return json({ items: tasks.slice(0, limit), count: Math.min(tasks.length, limit), total: tasks.length })
     }
