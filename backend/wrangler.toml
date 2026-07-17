@@ -2,10 +2,15 @@ name = "best-code-ide"
 main = "src/index.ts"
 compatibility_date = "2024-11-01"
 
-# Secrets (never put values here — set with `wrangler secret put <NAME>`):
-#   DEEPSEEK_API_KEY  DeepSeek platform API key
-#   GITHUB_TOKEN      GitHub fine-grained PAT, Contents: Read & write on the target repo(s)
-#   AUTH_TOKEN        Bearer token this app/any AI chat must send to use the API
+# Secrets and configuration (never put real values in this file):
+#   DEEPSEEK_API_KEY    Legacy in-app DeepSeek agent key
+#   GITHUB_TOKEN        Fine-grained GitHub token scoped to approved repositories
+#   AUTH_TOKEN          Bearer token required by PWA, REST, and MCP requests
+#   PROJECTS_JSON       Optional JSON project registry exposed through MCP
+#   MCP_ALLOWED_ORIGINS Optional comma-separated trusted browser origins
+#
+# Example PROJECTS_JSON shape:
+# [{"id":"bestcode","name":"BestCode PWA","owner":"enkhbat194","repo":"best-code-ide","defaultBranch":"main"}]
 
 [observability]
 enabled = true

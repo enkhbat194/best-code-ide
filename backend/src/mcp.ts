@@ -1,129 +1,228 @@
-import { executeTool, toolSchemas } from './tools'
-import { CORS_HEADERS, resolveSecret } from './utils'
+import { executeReadOnlyMcpTool, readOnlyMcpTools } from './mcpReadTools'
+import { resolveSecret } from './utils'
 import type { Env } from './types'
 
-const REPO_PARAMS = {
-  owner: { type: 'string', description: 'GitHub repository owner or organization' },
-  repo: { type: 'string', description: 'GitHub repository name' },
-  branch: { type: 'string', description: 'Selected branch, defaults to main' },
-}
+const LATEST_PROTOCOL_VERSION = '2025-11-25'
+const SUPPORTED_PROTOCOL_VERSIONS = new Set(['2025-11-25', '2025-06-18', '2025-03-26'])
+const DEFAULT_BROWSER_ORIGINS = ['https://chatgpt.com', 'https://chat.openai.com']
 
-const MCP_TOOLS = toolSchemas.map((schema) => {
-  const fn = schema.function
-  if (fn.name === 'create_repo') {
-    return { name: fn.name, description: fn.description, inputSchema: fn.parameters }
-  }
-  const parameters = fn.parameters as {
-    type: string
-    properties?: Record<string, unknown>
-    required?: readonly string[]
-  }
-  return {
-    name: fn.name,
-    description: fn.description,
-    inputSchema: {
-      type: 'object',
-      properties: { ...REPO_PARAMS, ...(parameters.properties ?? {}) },
-      required: ['owner', 'repo', ...(parameters.required ?? [])],
-    },
-  }
-})
-
-interface JsonRpcRequest {
+interface JsonRpcMessage {
   jsonrpc: '2.0'
-  id?: string | number
-  method: string
+  id?: string | number | null
+  method?: string
   params?: Record<string, unknown>
+  result?: unknown
+  error?: unknown
 }
 
-function rpcResponse(id: string | number | undefined, result: unknown): Response {
-  return new Response(JSON.stringify({ jsonrpc: '2.0', id, result }), {
-    headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+function jsonHeaders(extra: HeadersInit = {}): HeadersInit {
+  return {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store',
+    ...extra,
+  }
+}
+
+function rpcResponse(id: string | number | null | undefined, result: unknown, headers: HeadersInit = {}): Response {
+  return new Response(JSON.stringify({ jsonrpc: '2.0', id: id ?? null, result }), {
+    headers: jsonHeaders(headers),
   })
 }
 
-function rpcError(id: string | number | undefined, code: number, message: string): Response {
-  return new Response(JSON.stringify({ jsonrpc: '2.0', id, error: { code, message } }), {
-    headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+function rpcError(
+  id: string | number | null | undefined,
+  code: number,
+  message: string,
+  status = 400,
+  data?: unknown,
+): Response {
+  return new Response(JSON.stringify({ jsonrpc: '2.0', id: id ?? null, error: { code, message, ...(data === undefined ? {} : { data }) } }), {
+    status,
+    headers: jsonHeaders(),
   })
 }
 
-/** Streamable HTTP MCP endpoint for Claude, Gemini-compatible clients, and other MCP hosts. */
+function allowedOrigins(req: Request, env: Env): Set<string> {
+  const configured = (env.MCP_ALLOWED_ORIGINS ?? '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+  return new Set([new URL(req.url).origin, ...DEFAULT_BROWSER_ORIGINS, ...configured])
+}
+
+function validateOrigin(req: Request, env: Env): Response | null {
+  const origin = req.headers.get('Origin')
+  if (!origin) return null
+  if (allowedOrigins(req, env).has(origin)) return null
+  return rpcError(undefined, -32001, 'Forbidden origin', 403, {
+    code: 'ORIGIN_NOT_ALLOWED',
+    action_required: 'Add the exact trusted origin to MCP_ALLOWED_ORIGINS in Cloudflare configuration.',
+  })
+}
+
+function validateProtocolVersion(req: Request, method: string): Response | null {
+  if (method === 'initialize') return null
+  const supplied = req.headers.get('MCP-Protocol-Version') ?? '2025-03-26'
+  if (SUPPORTED_PROTOCOL_VERSIONS.has(supplied)) return null
+  return rpcError(undefined, -32600, `Unsupported MCP protocol version: ${supplied}`, 400, {
+    supported_versions: [...SUPPORTED_PROTOCOL_VERSIONS],
+  })
+}
+
+function validateAccept(req: Request): Response | null {
+  const accept = req.headers.get('Accept') ?? ''
+  const acceptsJson = accept.includes('application/json') || accept.includes('*/*')
+  const acceptsEvents = accept.includes('text/event-stream') || accept.includes('*/*')
+  if (acceptsJson && acceptsEvents) return null
+  return rpcError(undefined, -32600, 'MCP POST requests must accept application/json and text/event-stream', 406)
+}
+
+function isNotification(message: JsonRpcMessage): boolean {
+  return typeof message.method === 'string' && message.id === undefined
+}
+
+function isJsonRpcResponse(message: JsonRpcMessage): boolean {
+  return message.method === undefined && (message.result !== undefined || message.error !== undefined)
+}
+
+function negotiatedVersion(params: Record<string, unknown> | undefined): string {
+  const requested = typeof params?.protocolVersion === 'string' ? params.protocolVersion : ''
+  return SUPPORTED_PROTOCOL_VERSIONS.has(requested) ? requested : LATEST_PROTOCOL_VERSION
+}
+
+function methodHeaders(method: string, toolName?: string): HeadersInit {
+  return {
+    'MCP-Protocol-Version': LATEST_PROTOCOL_VERSION,
+    'MCP-Method': method,
+    ...(toolName ? { 'MCP-Name': toolName } : {}),
+  }
+}
+
+/**
+ * Stateless, JSON-response Streamable HTTP MCP endpoint.
+ * GET is accepted by the route and returns 405 because this phase does not expose a server-initiated SSE stream.
+ */
 export async function handleMcp(req: Request, env: Env): Promise<Response> {
-  let rpc: JsonRpcRequest
+  const originError = validateOrigin(req, env)
+  if (originError) return originError
+
+  if (req.method === 'GET') {
+    return new Response(null, {
+      status: 405,
+      headers: { Allow: 'POST, GET', 'Cache-Control': 'no-store' },
+    })
+  }
+
+  if (req.method === 'DELETE') {
+    return new Response(null, {
+      status: 405,
+      headers: { Allow: 'POST, GET', 'Cache-Control': 'no-store' },
+    })
+  }
+
+  if (req.method !== 'POST') {
+    return new Response(null, { status: 405, headers: { Allow: 'POST, GET' } })
+  }
+
+  const acceptError = validateAccept(req)
+  if (acceptError) return acceptError
+
+  let message: JsonRpcMessage
   try {
-    rpc = await req.json()
+    const parsed = await req.json()
+    if (Array.isArray(parsed) || !parsed || typeof parsed !== 'object') {
+      return rpcError(undefined, -32600, 'A single JSON-RPC object is required')
+    }
+    message = parsed as JsonRpcMessage
   } catch {
     return rpcError(undefined, -32700, 'Parse error')
   }
 
-  switch (rpc.method) {
-    case 'initialize':
-      return rpcResponse(rpc.id, {
-        protocolVersion: '2024-11-05',
-        capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: 'best-code-ide', version: '0.2.0' },
-      })
+  if (message.jsonrpc !== '2.0') return rpcError(message.id, -32600, 'jsonrpc must equal 2.0')
 
-    case 'notifications/initialized':
-    case 'notifications/cancelled':
-      return new Response(null, { status: 202, headers: CORS_HEADERS })
+  if (isJsonRpcResponse(message)) return new Response(null, { status: 202, headers: { 'Cache-Control': 'no-store' } })
+  if (typeof message.method !== 'string') return rpcError(message.id, -32600, 'Missing JSON-RPC method')
+
+  const protocolError = validateProtocolVersion(req, message.method)
+  if (protocolError) return protocolError
+
+  if (isNotification(message)) {
+    if (message.method === 'notifications/initialized' || message.method === 'notifications/cancelled') {
+      return new Response(null, { status: 202, headers: { 'Cache-Control': 'no-store' } })
+    }
+    return new Response(null, { status: 202, headers: { 'Cache-Control': 'no-store' } })
+  }
+
+  switch (message.method) {
+    case 'initialize': {
+      const protocolVersion = negotiatedVersion(message.params)
+      return rpcResponse(
+        message.id,
+        {
+          protocolVersion,
+          capabilities: { tools: { listChanged: false } },
+          serverInfo: {
+            name: 'bestcode-repository-controller',
+            title: 'BestCode Repository Controller',
+            version: '0.3.0',
+            description: 'Read-only Phase 2 MCP surface for approved GitHub projects.',
+          },
+          instructions:
+            'Use projects_list first. Only project IDs returned by that tool are accessible. This Phase 2 MCP surface is read-only; it cannot modify files, branches, commits, deployments, or secrets.',
+        },
+        { 'MCP-Protocol-Version': protocolVersion },
+      )
+    }
 
     case 'ping':
-      return rpcResponse(rpc.id, {})
+      return rpcResponse(message.id, {}, methodHeaders('ping'))
 
     case 'tools/list':
-      return rpcResponse(rpc.id, { tools: MCP_TOOLS })
+      return rpcResponse(message.id, { tools: readOnlyMcpTools }, methodHeaders('tools/list'))
 
     case 'tools/call': {
+      const name = typeof message.params?.name === 'string' ? message.params.name : ''
+      const args = message.params?.arguments
+      if (!name) return rpcError(message.id, -32602, 'Missing tool name')
+      if (!readOnlyMcpTools.some((tool) => tool.name === name)) {
+        return rpcError(message.id, -32602, `Unknown or unavailable read-only tool: ${name}`)
+      }
+      if (args !== undefined && (!args || typeof args !== 'object' || Array.isArray(args))) {
+        return rpcError(message.id, -32602, 'Tool arguments must be a JSON object')
+      }
+
       const githubToken = resolveSecret(env, 'GITHUB_TOKEN')
       if (!githubToken) {
-        return rpcResponse(rpc.id, {
-          content: [{ type: 'text', text: 'GITHUB_TOKEN secret is missing' }],
+        return rpcResponse(message.id, {
+          content: [{ type: 'text', text: JSON.stringify({ ok: false, error: { code: 'GITHUB_TOKEN_MISSING', message: 'GitHub access is not configured.' } }) }],
+          structuredContent: {
+            ok: false,
+            operation_id: crypto.randomUUID(),
+            status: 'failed',
+            error: {
+              code: 'GITHUB_TOKEN_MISSING',
+              message: 'GitHub access is not configured.',
+              retryable: false,
+              action_required: 'Set GITHUB_TOKEN in Cloudflare Secrets.',
+            },
+          },
           isError: true,
-        })
+        }, methodHeaders('tools/call', name))
       }
 
-      const name = String(rpc.params?.name ?? '')
-      const args = (rpc.params?.arguments as Record<string, unknown>) ?? {}
-      if (!name) return rpcError(rpc.id, -32602, 'Missing tool name')
-
-      if (name === 'create_repo') {
-        try {
-          const result = await executeTool(name, args, githubToken, { owner: '', repo: '', branch: '' })
-          return rpcResponse(rpc.id, { content: [{ type: 'text', text: result }] })
-        } catch (err) {
-          return rpcResponse(rpc.id, {
-            content: [{ type: 'text', text: err instanceof Error ? err.message : String(err) }],
-            isError: true,
-          })
-        }
-      }
-
-      const { owner, repo, branch, ...rest } = args
-      if (!owner || !repo) {
-        return rpcResponse(rpc.id, {
-          content: [{ type: 'text', text: 'owner and repo are required arguments' }],
-          isError: true,
-        })
-      }
-
-      try {
-        const result = await executeTool(name, rest, githubToken, {
-          owner: String(owner),
-          repo: String(repo),
-          branch: branch ? String(branch) : 'main',
-        })
-        return rpcResponse(rpc.id, { content: [{ type: 'text', text: result }] })
-      } catch (err) {
-        return rpcResponse(rpc.id, {
-          content: [{ type: 'text', text: err instanceof Error ? err.message : String(err) }],
-          isError: true,
-        })
-      }
+      const startedAt = Date.now()
+      const result = await executeReadOnlyMcpTool(name, (args as Record<string, unknown> | undefined) ?? {}, githubToken, env)
+      console.log(JSON.stringify({
+        event: 'mcp_tool_call',
+        tool: name,
+        operation_id: result.structuredContent.operation_id,
+        ok: result.structuredContent.ok,
+        duration_ms: Date.now() - startedAt,
+      }))
+      return rpcResponse(message.id, result, methodHeaders('tools/call', name))
     }
 
     default:
-      return rpcError(rpc.id, -32601, `Method not found: ${rpc.method}`)
+      return rpcError(message.id, -32601, `Method not found: ${message.method}`)
   }
 }
