@@ -87,11 +87,12 @@ export async function getTask(env: Env, taskId: string): Promise<TaskRecord> {
 
 export async function listTasks(
   env: Env,
-  filters: { kind?: string; projectId?: string; limit?: number } = {},
+  filters: { kind?: string; projectId?: string; operationId?: string; limit?: number } = {},
 ): Promise<{ items: TaskRecord[]; count: number; total: number }> {
   const query = new URLSearchParams()
   if (filters.kind) query.set('kind', filters.kind)
   if (filters.projectId) query.set('project_id', filters.projectId)
+  if (filters.operationId) query.set('operation_id', filters.operationId)
   if (filters.limit) query.set('limit', String(filters.limit))
   return request(env, `/tasks?${query.toString()}`)
 }
