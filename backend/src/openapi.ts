@@ -1,12 +1,14 @@
 import { deliveryMcpTools } from './mcpDeliveryTools'
+import { deploymentMcpTools } from './mcpDeploymentTools'
 import { readOnlyMcpTools } from './mcpReadTools'
 import { safeWriteMcpTools } from './mcpWriteTools'
 
-const ACTION_TOOLS = [...readOnlyMcpTools, ...safeWriteMcpTools, ...deliveryMcpTools]
+const ACTION_TOOLS = [...readOnlyMcpTools, ...safeWriteMcpTools, ...deliveryMcpTools, ...deploymentMcpTools]
 
 function tagFor(name: string): string {
   if (name.startsWith('projects_') || name.startsWith('project_')) return 'Projects'
   if (name.startsWith('build_') || name.startsWith('test_') || name.startsWith('task_')) return 'Build and test'
+  if (name.startsWith('deployment_')) return 'Deployment'
   if (name.startsWith('approval_')) return 'Approvals'
   if (name.startsWith('preview_')) return 'Preview'
   return 'Repository'
@@ -21,12 +23,15 @@ function safetyNote(tool: (typeof ACTION_TOOLS)[number]): string {
     return 'This action stages a diff only. It does not commit or push. The user must approve the operation in BestCode.'
   }
   if (tool.name === 'repository_commit') {
-    return 'This action requires an already approved operation and prepares a commit object without moving the branch ref.'
+    return 'This action requires an already approved code-change operation and prepares a commit object without moving the branch ref.'
   }
   if (tool.name === 'repository_push') {
     return 'This action fast-forwards an approved prepared commit. Force push and main/master are blocked.'
   }
-  return 'This action follows BestCode project allowlists, protected-branch rules, and durable task state.'
+  if (tool.name === 'deployment_start') {
+    return 'The first call creates a separate high-risk approval and does not deploy. A second call with the approved operation ID may dispatch only the configured workflow from the project default branch.'
+  }
+  return 'This action follows BestCode project allowlists, protected-branch rules, approval requirements, and durable task state.'
 }
 
 function actionPaths(): Record<string, object> {
@@ -102,8 +107,8 @@ export function openapiSpec(origin: string): object {
     info: {
       title: 'BestCode Repository Controller',
       description:
-        'Project-scoped GitHub and IDE controller for ChatGPT Actions. Use projects_list first, work only on agent/<task> branches, stage changes for user approval, then commit, push, build, test, and open a draft pull request.',
-      version: '0.6.0',
+        'Project-scoped GitHub and IDE controller for ChatGPT Actions. Use projects_list first, work only on agent/<task> branches, stage code changes for user approval, commit, push, build, test, open a draft pull request, then request a separate production deployment approval.',
+      version: '0.7.0',
     },
     servers: [{ url: origin }],
     security: [{ bearerAuth: [] }],
@@ -112,6 +117,7 @@ export function openapiSpec(origin: string): object {
       { name: 'Repository', description: 'Repository inspection, staged changes, Git delivery, and pull requests.' },
       { name: 'Approvals', description: 'Read approval state. Approval decisions remain user-only in the BestCode UI.' },
       { name: 'Build and test', description: 'GitHub Actions task start, status, logs, and cancellation.' },
+      { name: 'Deployment', description: 'Approval-gated production deployment request, status, and logs.' },
       { name: 'Preview', description: 'Configured project preview metadata.' },
     ],
     components: {
