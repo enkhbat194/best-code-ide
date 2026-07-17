@@ -5,13 +5,37 @@ interface ToolResponse {
   branch?: string
 }
 
+export interface ApprovalChange {
+  action: 'create' | 'update' | 'delete'
+  path: string
+  base_sha: string | null
+  diff: string
+}
+
+export interface ApprovalOperation {
+  operation_id: string
+  project_id: string
+  repository: { owner: string; repo: string; full_name: string }
+  branch: string
+  title: string
+  summary: string
+  status: 'pending_approval' | 'approved' | 'rejected' | 'cancelled' | 'expired' | 'committed'
+  approval_required: true
+  risk: 'normal' | 'high'
+  risk_reasons: string[]
+  changes: ApprovalChange[]
+  created_at: string
+  updated_at: string
+  expires_at: string
+}
+
 function settings() {
   const value = useSettingsStore.getState()
   if (!value.isConfigured()) throw new Error('Backend, token, owner, repo, branch тохируулаагүй байна')
   return value
 }
 
-async function request(path: string, init?: RequestInit): Promise<ToolResponse> {
+async function rawRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const { backendUrl, authToken } = settings()
   const res = await fetch(`${backendUrl}${path}`, {
     ...init,
@@ -23,7 +47,11 @@ async function request(path: string, init?: RequestInit): Promise<ToolResponse> 
   })
   const text = await res.text()
   if (!res.ok) throw new Error(text || `Backend error ${res.status}`)
-  return JSON.parse(text) as ToolResponse
+  return JSON.parse(text) as T
+}
+
+async function request(path: string, init?: RequestInit): Promise<ToolResponse> {
+  return rawRequest<ToolResponse>(path, init)
 }
 
 function repoPrefix(): string {
@@ -69,4 +97,25 @@ export async function createDraftPullRequest(input: {
       body: JSON.stringify({ ...input, draft: true }),
     })
   ).result
+}
+
+export async function listApprovals(status = 'pending_approval'): Promise<ApprovalOperation[]> {
+  const { owner, repo } = settings()
+  const query = new URLSearchParams({ status, limit: '50' })
+  const payload = await rawRequest<{ items: ApprovalOperation[] }>(`/api/approvals?${query.toString()}`)
+  return payload.items.filter((item) => item.repository.owner === owner && item.repository.repo === repo)
+}
+
+export async function decideApproval(
+  operationId: string,
+  decision: 'approved' | 'rejected',
+): Promise<ApprovalOperation> {
+  return rawRequest<ApprovalOperation>(`/api/approvals/${encodeURIComponent(operationId)}/decision`, {
+    method: 'POST',
+    body: JSON.stringify({ decision, actor: 'pwa-user' }),
+  })
+}
+
+export async function getApproval(operationId: string): Promise<ApprovalOperation> {
+  return rawRequest<ApprovalOperation>(`/api/approvals/${encodeURIComponent(operationId)}`)
 }

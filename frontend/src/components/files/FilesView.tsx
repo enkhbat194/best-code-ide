@@ -39,12 +39,16 @@ export function FilesView() {
               setPushStatus(null)
               try {
                 await save()
-                await commitFile({
+                const result = await commitFile({
                   path: openPath,
                   content: openContent,
                   message: `Update ${openPath} from mobile workspace`,
                 })
-                setPushStatus({ kind: 'ok', text: 'GitHub branch руу commit хийгдлээ ✓' })
+                const riskText = result.risk === 'high' ? ' Өндөр эрсдэлтэй өөрчлөлт гэж тэмдэглэгдсэн.' : ''
+                setPushStatus({
+                  kind: 'ok',
+                  text: `Өөрчлөлт approval-д орлоо. ID: ${result.operationId}.${riskText}`,
+                })
               } catch (err) {
                 setPushStatus({ kind: 'err', text: err instanceof Error ? err.message : String(err) })
               } finally {
@@ -52,7 +56,7 @@ export function FilesView() {
               }
             }}
           >
-            <UploadCloud size={14} /> Push
+            <UploadCloud size={14} /> Approval
           </button>
         </div>
         {pushStatus && <div className={`${styles.status} ${pushStatus.kind === 'ok' ? styles.ok : styles.err}`}>{pushStatus.text}</div>}
