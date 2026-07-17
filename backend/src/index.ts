@@ -3,6 +3,7 @@ import { handleFilesCommit } from './files'
 import { handleMcp } from './mcp'
 import { openapiSpec } from './openapi'
 import { handleRest } from './rest'
+import { handleWorkspaceExport } from './workspace'
 import { CORS_HEADERS, jsonError, jsonResponse, resolveSecret } from './utils'
 import type { Env } from './types'
 
@@ -22,22 +23,19 @@ export default {
     const url = new URL(req.url)
 
     if (url.pathname === '/health') {
-      // Names and booleans only — never the values. Confirms which secrets the
-      // running version actually has bound, since the dashboard can disagree.
-      // bindingNames are JSON-escaped so stray/invisible characters show up.
       return jsonResponse({
         ok: true,
-        build: 'diag-2',
+        build: 'agent-core-v1',
         secrets: {
           DEEPSEEK_API_KEY: Boolean(resolveSecret(env, 'DEEPSEEK_API_KEY')),
           GITHUB_TOKEN: Boolean(resolveSecret(env, 'GITHUB_TOKEN')),
           AUTH_TOKEN: Boolean(resolveSecret(env, 'AUTH_TOKEN')),
         },
-        bindingNames: Object.keys(env as unknown as Record<string, unknown>).map((k) => JSON.stringify(k)),
+        bindingNames: Object.keys(env as unknown as Record<string, unknown>).map((key) => JSON.stringify(key)),
       })
     }
 
-    // Schema discovery is public so ChatGPT (and humans) can inspect the API before authenticating.
+    // Public schema discovery for ChatGPT Actions configuration.
     if (url.pathname === '/openapi.json' && req.method === 'GET') {
       return jsonResponse(openapiSpec(url.origin))
     }
@@ -52,6 +50,10 @@ export default {
 
     if (url.pathname === '/api/files/commit' && req.method === 'POST') {
       return handleFilesCommit(req, env)
+    }
+
+    if (url.pathname === '/api/workspace/export' && req.method === 'POST') {
+      return handleWorkspaceExport(req, env)
     }
 
     if (url.pathname === '/mcp' && req.method === 'POST') {
