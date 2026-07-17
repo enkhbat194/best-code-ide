@@ -2,6 +2,8 @@ export interface Env {
   DEEPSEEK_API_KEY: string
   GITHUB_TOKEN: string
   AUTH_TOKEN: string
+  PROJECTS_JSON?: string
+  MCP_ALLOWED_ORIGINS?: string
 }
 
 export type Role = 'system' | 'user' | 'assistant' | 'tool'
