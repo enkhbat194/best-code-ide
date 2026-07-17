@@ -35,6 +35,13 @@ function riskReasons(path: string): string[] {
   return reasons
 }
 
+function directLegacyCommitEnabled(env: Env): boolean {
+  return (
+    env.ENABLE_LEGACY_REST_WRITES?.trim().toLowerCase() === 'true' &&
+    env.REQUIRE_APPROVALS?.trim().toLowerCase() === 'false'
+  )
+}
+
 export async function handleFilesCommit(req: Request, env: Env): Promise<Response> {
   let body: CommitRequestBody
   try {
@@ -54,10 +61,9 @@ export async function handleFilesCommit(req: Request, env: Env): Promise<Respons
   const githubToken = resolveSecret(env, 'GITHUB_TOKEN')
   if (!githubToken) return jsonError('GITHUB_TOKEN secret is missing', 500)
 
-  // Default flow is Replit-style: commit straight to the selected branch.
-  // Set REQUIRE_APPROVALS=true to switch to the staged approval workflow below.
-  const approvalsRequired = env.REQUIRE_APPROVALS?.trim().toLowerCase() === 'true'
-  if (!approvalsRequired) {
+  // Safe default: stage a pending approval. Direct commits require two
+  // explicit legacy opt-ins and remain blocked on main/master by repository tools.
+  if (directLegacyCommitEnabled(env)) {
     try {
       const path = normalizePath(body.path)
       const message = (body.message?.trim() || `Update ${path} from mobile app`).slice(0, 160)
