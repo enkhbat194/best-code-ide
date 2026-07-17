@@ -28,7 +28,7 @@ export const useSettingsStore = create<SettingsState>()(
       setOwner: (v) => set({ owner: v.trim() }),
       setRepo: (v) => set({ repo: v.trim() }),
       setBranch: (v) => set({ branch: v.trim() || 'main' }),
-      isConfigured: () => Boolean(get().backendUrl && get().authToken),
+      isConfigured: () => Boolean(get().backendUrl && get().authToken && get().owner && get().repo && get().branch),
     }),
     { name: 'codeide-settings' },
   ),
