@@ -1,4 +1,8 @@
 import * as gh from './github'
+import { createApproval } from './approvalClient'
+import type { ApprovalOperation } from './approvalStore'
+import { createUnifiedDiff } from './patch'
+import { listProjects } from './projects'
 import { jsonError, jsonResponse, resolveSecret } from './utils'
 import type { Env } from './types'
 
@@ -15,6 +19,22 @@ function isProtectedBranch(branch: string): boolean {
   return branch === 'main' || branch === 'master'
 }
 
+function normalizePath(value: string): string {
+  const path = value.trim().replace(/^\/+/, '')
+  if (!path || path.length > 240) throw new Error('Invalid file path')
+  if (path.split('/').some((part) => part === '..' || part === '.')) throw new Error('Relative path segments are not allowed')
+  return path
+}
+
+function riskReasons(path: string): string[] {
+  const reasons: string[] = []
+  if (path.startsWith('.github/workflows/')) reasons.push('workflow_change')
+  if (/(^|\/)(\.env|wrangler\.toml|package\.json|package-lock\.json)$/i.test(path)) {
+    reasons.push('configuration_or_dependency_change')
+  }
+  return reasons
+}
+
 export async function handleFilesCommit(req: Request, env: Env): Promise<Response> {
   let body: CommitRequestBody
   try {
@@ -23,20 +43,67 @@ export async function handleFilesCommit(req: Request, env: Env): Promise<Respons
     return jsonError('Invalid JSON body')
   }
 
-  const { owner, repo, path, content } = body
-  const branch = body.branch || 'main'
-  const message = body.message || `Update ${path}`
-  if (!owner || !repo || !path) return jsonError('owner, repo, and path are required')
+  const owner = body.owner?.trim()
+  const repo = body.repo?.trim()
+  const branch = body.branch?.trim() || 'main'
+  if (!owner || !repo || !body.path) return jsonError('owner, repo, and path are required')
   if (isProtectedBranch(branch)) {
-    return jsonError('Direct commits to main/master are blocked. Create and select a working branch first.', 409)
+    return jsonError('Direct changes to main/master are blocked. Create and select a working branch first.', 409)
   }
+  if (typeof body.content !== 'string' || body.content.length > 500_000) {
+    return jsonError('content must be UTF-8 text no larger than 500000 characters')
+  }
+
+  const project = listProjects(env).find((item) => item.owner === owner && item.repo === repo)
+  if (!project) return jsonError('Repository is not present in the approved project registry', 403)
 
   const githubToken = resolveSecret(env, 'GITHUB_TOKEN')
   if (!githubToken) return jsonError('GITHUB_TOKEN secret is missing', 500)
 
   try {
-    const result = await gh.putFile(githubToken, owner, repo, path, content ?? '', message, branch)
-    return jsonResponse({ ok: true, branch, commitUrl: result.commitUrl })
+    const path = normalizePath(body.path)
+    const existing = await gh.getFile(githubToken, owner, repo, path, branch)
+    if (existing?.content === body.content) return jsonError('The proposed content is identical to the branch content', 409)
+
+    const operationId = crypto.randomUUID()
+    const now = new Date()
+    const reasons = riskReasons(path)
+    const operation: ApprovalOperation = {
+      operation_id: operationId,
+      project_id: project.id,
+      repository: { owner, repo, full_name: `${owner}/${repo}` },
+      branch,
+      title: (body.message?.trim() || `Update ${path} from mobile workspace`).slice(0, 160),
+      summary: `Review the mobile editor change proposed for ${path}.`,
+      status: 'pending_approval',
+      approval_required: true,
+      risk: reasons.length > 0 ? 'high' : 'normal',
+      risk_reasons: reasons,
+      changes: [
+        {
+          action: existing ? 'update' : 'create',
+          path,
+          base_sha: existing?.sha ?? null,
+          base_content: existing?.content ?? null,
+          proposed_content: body.content,
+          diff: createUnifiedDiff(path, existing?.content ?? null, body.content),
+        },
+      ],
+      created_at: now.toISOString(),
+      updated_at: now.toISOString(),
+      expires_at: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(),
+    }
+
+    await createApproval(env, operation)
+    return jsonResponse({
+      ok: true,
+      status: operation.status,
+      approvalRequired: true,
+      operationId,
+      branch,
+      risk: operation.risk,
+      diff: operation.changes[0].diff,
+    }, 202)
   } catch (err) {
     return jsonError(err instanceof Error ? err.message : String(err), 502)
   }
