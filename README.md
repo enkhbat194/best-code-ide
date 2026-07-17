@@ -45,7 +45,7 @@ npx wrangler secret put AUTH_TOKEN   # өөрөө think up хийсэн урт r
 npx wrangler deploy
 ```
 
-Deploy дуусахад `https://best-code-ide-api.<таны-нэр>.workers.dev` гэсэн URL өгнө — үүнийг хадгал.
+Deploy дуусахад `https://best-code-ide.<таны-нэр>.workers.dev` гэсэн URL өгнө — үүнийг хадгал.
 
 ## 4. Frontend deploy хийх (Cloudflare Pages — үнэгүй)
 
