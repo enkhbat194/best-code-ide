@@ -18,7 +18,11 @@ async function digest(value: string): Promise<Uint8Array> {
 
 async function isAuthorized(req: Request, env: Env): Promise<boolean> {
   const header = req.headers.get('Authorization') ?? ''
-  const token = header.startsWith('Bearer ') ? header.slice(7) : ''
+  // Some MCP hosts (e.g. Claude's custom-connector UI) can't set custom
+  // headers, so the token may also ride in a ?key= query parameter.
+  const token = header.startsWith('Bearer ')
+    ? header.slice(7)
+    : (new URL(req.url).searchParams.get('key') ?? '')
   const expected = resolveSecret(env, 'AUTH_TOKEN')
   if (!token || !expected) return false
 

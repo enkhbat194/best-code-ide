@@ -175,6 +175,8 @@ function systemPrompt(): string {
     `push_to_github ONLY when the user explicitly asks to sync or push. ` +
     `When the user asks for a program, write the file(s) locally and tell them to open the Preview tab to run it. ` +
     `For a runnable browser demo prefer a single self-contained .html file, or a plain .js file for console output. ` +
+    `The preview runs on a narrow phone screen: always write mobile-responsive HTML/CSS — moderate font sizes, ` +
+    `width:100%, no fixed pixel widths, flex/grid centering, and test-safe overflow (no horizontal scrolling). ` +
     `Reply in the user's language (usually Mongolian). Keep replies short and concrete.`
   )
 }
