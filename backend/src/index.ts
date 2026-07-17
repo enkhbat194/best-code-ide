@@ -29,6 +29,10 @@ async function isAuthorized(req: Request, env: Env): Promise<boolean> {
   return difference === 0
 }
 
+function enabled(value: string | undefined): boolean {
+  return value?.trim().toLowerCase() === 'true'
+}
+
 function unauthorized(): Response {
   const response = jsonError('Unauthorized — missing or invalid Bearer token', 401)
   response.headers.set('WWW-Authenticate', 'Bearer realm="BestCode MCP"')
@@ -66,6 +70,9 @@ export default {
     if (taskResponse) return taskResponse
 
     if (url.pathname === '/api/chat' && req.method === 'POST') {
+      if (!enabled(env.ENABLE_LEGACY_AGENT)) {
+        return jsonError('Legacy in-app AI agent is disabled. Use the BestCode MCP connection from ChatGPT or another MCP host.', 410)
+      }
       return handleChat(req, env)
     }
 
