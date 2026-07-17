@@ -7,6 +7,10 @@ export interface ProjectConfig {
   repo: string
   defaultBranch: string
   description?: string
+  buildWorkflow?: string
+  testWorkflow?: string
+  deployWorkflow?: string
+  previewUrl?: string
 }
 
 const DEFAULT_PROJECTS: ProjectConfig[] = [
@@ -17,8 +21,15 @@ const DEFAULT_PROJECTS: ProjectConfig[] = [
     repo: 'best-code-ide',
     defaultBranch: 'main',
     description: 'Mobile-first GitHub and VS Code style repository controller.',
+    buildWorkflow: 'validate.yml',
+    testWorkflow: 'test.yml',
+    deployWorkflow: 'deploy.yml',
   },
 ]
+
+function optionalString(project: Record<string, unknown>, key: string): boolean {
+  return project[key] === undefined || typeof project[key] === 'string'
+}
 
 function isProject(value: unknown): value is ProjectConfig {
   if (!value || typeof value !== 'object') return false
@@ -29,7 +40,12 @@ function isProject(value: unknown): value is ProjectConfig {
     typeof project.name === 'string' &&
     typeof project.owner === 'string' &&
     typeof project.repo === 'string' &&
-    typeof project.defaultBranch === 'string'
+    typeof project.defaultBranch === 'string' &&
+    optionalString(project, 'description') &&
+    optionalString(project, 'buildWorkflow') &&
+    optionalString(project, 'testWorkflow') &&
+    optionalString(project, 'deployWorkflow') &&
+    optionalString(project, 'previewUrl')
   )
 }
 
