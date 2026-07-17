@@ -4,8 +4,9 @@ export type StreamEvent =
   | { type: 'text_delta'; delta: string }
   | { type: 'tool_call'; id: string; name: string; args: Record<string, unknown> }
   | { type: 'tool_result'; id: string; result: string; error?: boolean }
+  | { type: 'branch_changed'; branch: string }
   | { type: 'error'; message: string }
-  | { type: 'done' }
+  | { type: 'done'; branch?: string }
 
 interface SendChatParams {
   backendUrl: string
