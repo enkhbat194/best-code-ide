@@ -1,6 +1,6 @@
 import { streamChat } from './deepseek'
 import { executeTool } from './tools'
-import { jsonError, CORS_HEADERS } from './utils'
+import { jsonError, resolveSecret, CORS_HEADERS } from './utils'
 import type { ChatCompletionMessage, Env, RepoContext, Role } from './types'
 
 const MAX_TOOL_ITERATIONS = 8
@@ -34,6 +34,13 @@ export async function handleChat(req: Request, env: Env): Promise<Response> {
       const send = (event: object) => controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`))
 
       try {
+        const deepseekKey = resolveSecret(env, 'DEEPSEEK_API_KEY')
+        const githubToken = resolveSecret(env, 'GITHUB_TOKEN') ?? env.GITHUB_TOKEN
+        if (!deepseekKey) {
+          send({ type: 'error', message: 'DEEPSEEK_API_KEY секрет Worker дээр олдсонгүй — Cloudflare Settings-с шалгана уу.' })
+          return
+        }
+
         const systemPrompt =
           `You are a coding assistant embedded in a mobile iPhone app. You have direct tool access to ` +
           `the GitHub repository ${owner}/${repo} on branch "${branch}" via list_files, read_file, ` +
@@ -48,7 +55,7 @@ export async function handleChat(req: Request, env: Env): Promise<Response> {
         ]
 
         for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
-          const assistantMsg = await streamChat(env.DEEPSEEK_API_KEY, messages, {
+          const assistantMsg = await streamChat(deepseekKey, messages, {
             onTextDelta: (delta) => send({ type: 'text_delta', delta }),
           })
           messages.push(assistantMsg)
@@ -68,7 +75,7 @@ export async function handleChat(req: Request, env: Env): Promise<Response> {
             let result: string
             let isError = false
             try {
-              result = await executeTool(tc.function.name, args, env.GITHUB_TOKEN, ctx)
+              result = await executeTool(tc.function.name, args, githubToken, ctx)
             } catch (err) {
               result = err instanceof Error ? err.message : String(err)
               isError = true

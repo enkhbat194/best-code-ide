@@ -3,13 +3,14 @@ import { handleFilesCommit } from './files'
 import { handleMcp } from './mcp'
 import { openapiSpec } from './openapi'
 import { handleRest } from './rest'
-import { CORS_HEADERS, jsonError, jsonResponse } from './utils'
+import { CORS_HEADERS, jsonError, jsonResponse, resolveSecret } from './utils'
 import type { Env } from './types'
 
 function isAuthorized(req: Request, env: Env): boolean {
   const header = req.headers.get('Authorization') ?? ''
   const token = header.startsWith('Bearer ') ? header.slice(7) : ''
-  return Boolean(env.AUTH_TOKEN) && token === env.AUTH_TOKEN
+  const expected = resolveSecret(env, 'AUTH_TOKEN')
+  return Boolean(expected) && token === expected
 }
 
 export default {
@@ -21,16 +22,18 @@ export default {
     const url = new URL(req.url)
 
     if (url.pathname === '/health') {
-      // Booleans only — never the values. Confirms which secrets the running
-      // version actually has bound, since the dashboard can disagree.
+      // Names and booleans only — never the values. Confirms which secrets the
+      // running version actually has bound, since the dashboard can disagree.
+      // bindingNames are JSON-escaped so stray/invisible characters show up.
       return jsonResponse({
         ok: true,
-        build: 'diag-1',
+        build: 'diag-2',
         secrets: {
-          DEEPSEEK_API_KEY: Boolean(env.DEEPSEEK_API_KEY),
-          GITHUB_TOKEN: Boolean(env.GITHUB_TOKEN),
-          AUTH_TOKEN: Boolean(env.AUTH_TOKEN),
+          DEEPSEEK_API_KEY: Boolean(resolveSecret(env, 'DEEPSEEK_API_KEY')),
+          GITHUB_TOKEN: Boolean(resolveSecret(env, 'GITHUB_TOKEN')),
+          AUTH_TOKEN: Boolean(resolveSecret(env, 'AUTH_TOKEN')),
         },
+        bindingNames: Object.keys(env as unknown as Record<string, unknown>).map((k) => JSON.stringify(k)),
       })
     }
 
