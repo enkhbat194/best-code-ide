@@ -44,4 +44,12 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
-      - run: npm run typecheck
+      - name: Typecheck
+        run: npm run typecheck 2>&1 | tee typecheck.log
+      - name: Upload typecheck log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-typecheck-log
+          path: backend/typecheck.log
+          if-no-files-found: ignore
