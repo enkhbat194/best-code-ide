@@ -6,6 +6,7 @@ import type { Env } from './types'
 function publicOperation(operation: ApprovalOperation) {
   return {
     operation_id: operation.operation_id,
+    purpose: operation.purpose ?? 'code_change',
     project_id: operation.project_id,
     repository: operation.repository,
     branch: operation.branch,
@@ -27,8 +28,14 @@ function publicOperation(operation: ApprovalOperation) {
     expires_at: operation.expires_at,
     decided_at: operation.decided_at,
     decision_actor: operation.decision_actor,
-    commit_sha: operation.commit_sha,
-    commit_url: operation.commit_url,
+    parent_sha: operation.parent_sha,
+    prepared_commit_sha: operation.prepared_commit_sha,
+    prepared_commit_url: operation.prepared_commit_url,
+    pushed_at: operation.pushed_at,
+    pr_number: operation.pr_number,
+    pr_url: operation.pr_url,
+    deployment_target: operation.deployment_target,
+    deployment_task_id: operation.deployment_task_id,
   }
 }
 
