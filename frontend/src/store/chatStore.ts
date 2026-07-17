@@ -38,7 +38,6 @@ export const useChatStore = create<ChatState>()(
         const userMsg: ChatMessage = { id: newId(), role: 'user', content: trimmed, createdAt: Date.now() }
         const assistantMsg: ChatMessage = { id: newId(), role: 'assistant', content: '', toolCalls: [], createdAt: Date.now() }
 
-        // Build the request before inserting the empty streaming assistant placeholder.
         const history = [...get().messages, userMsg]
           .filter((message) => message.role !== 'tool' && message.content.trim())
           .map((message) => ({ role: message.role, content: message.content }))
@@ -56,6 +55,12 @@ export const useChatStore = create<ChatState>()(
               messages: history,
             },
             (event) => {
+              if (event.type === 'branch_changed' || (event.type === 'done' && event.branch)) {
+                const branch = event.type === 'branch_changed' ? event.branch : event.branch
+                if (branch) useSettingsStore.getState().setBranch(branch)
+                return
+              }
+
               set((state) => {
                 const messages = [...state.messages]
                 const index = messages.findIndex((message) => message.id === assistantMsg.id)
