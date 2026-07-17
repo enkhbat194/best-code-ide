@@ -15,6 +15,7 @@
 
 .toolbar input {
   flex: 1;
+  min-width: 0;
   border-radius: 8px;
   padding: 7px 10px;
 }
@@ -23,7 +24,21 @@
   border: 1px solid var(--border);
   background: var(--bg-elevated);
   border-radius: 8px;
-  padding: 7px 12px;
+  padding: 7px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+.toolbar button:disabled {
+  opacity: 0.5;
+}
+
+.importButton {
+  color: var(--accent);
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .list {

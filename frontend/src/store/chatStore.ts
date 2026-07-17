@@ -31,17 +31,19 @@ export const useChatStore = create<ChatState>()(
 
         const settings = useSettingsStore.getState()
         if (!settings.isConfigured()) {
-          set({ error: 'Settings tab-с backend URL болон token-оо тохируулна уу.' })
+          set({ error: 'Settings tab-д backend URL, token, GitHub owner, repo, branch-аа бүрэн тохируулна уу.' })
           return
         }
 
         const userMsg: ChatMessage = { id: newId(), role: 'user', content: trimmed, createdAt: Date.now() }
         const assistantMsg: ChatMessage = { id: newId(), role: 'assistant', content: '', toolCalls: [], createdAt: Date.now() }
-        set((s) => ({ messages: [...s.messages, userMsg, assistantMsg], isSending: true, error: null }))
 
-        const history = get()
-          .messages.filter((m) => m.role !== 'tool')
-          .map((m) => ({ role: m.role, content: m.content }))
+        // Build the request before inserting the empty streaming assistant placeholder.
+        const history = [...get().messages, userMsg]
+          .filter((message) => message.role !== 'tool' && message.content.trim())
+          .map((message) => ({ role: message.role, content: message.content }))
+
+        set((state) => ({ messages: [...state.messages, userMsg, assistantMsg], isSending: true, error: null }))
 
         try {
           await sendChat(
@@ -54,30 +56,34 @@ export const useChatStore = create<ChatState>()(
               messages: history,
             },
             (event) => {
-              set((s) => {
-                const messages = [...s.messages]
-                const idx = messages.findIndex((m) => m.id === assistantMsg.id)
-                if (idx === -1) return s
-                const msg = { ...messages[idx] }
-                const toolCalls: ToolCall[] = msg.toolCalls ? [...msg.toolCalls] : []
+              set((state) => {
+                const messages = [...state.messages]
+                const index = messages.findIndex((message) => message.id === assistantMsg.id)
+                if (index === -1) return state
+                const message = { ...messages[index] }
+                const toolCalls: ToolCall[] = message.toolCalls ? [...message.toolCalls] : []
 
                 if (event.type === 'text_delta') {
-                  msg.content += event.delta
+                  message.content += event.delta
                 } else if (event.type === 'tool_call') {
                   toolCalls.push({ id: event.id, name: event.name, args: event.args, status: 'running' })
-                  msg.toolCalls = toolCalls
+                  message.toolCalls = toolCalls
                 } else if (event.type === 'tool_result') {
-                  const tcIdx = toolCalls.findIndex((tc) => tc.id === event.id)
-                  if (tcIdx !== -1) {
-                    toolCalls[tcIdx] = { ...toolCalls[tcIdx], status: event.error ? 'error' : 'done', result: event.result }
-                    msg.toolCalls = toolCalls
+                  const toolIndex = toolCalls.findIndex((toolCall) => toolCall.id === event.id)
+                  if (toolIndex !== -1) {
+                    toolCalls[toolIndex] = {
+                      ...toolCalls[toolIndex],
+                      status: event.error ? 'error' : 'done',
+                      result: event.result,
+                    }
+                    message.toolCalls = toolCalls
                   }
                 } else if (event.type === 'error') {
-                  return { ...s, error: event.message }
+                  return { ...state, error: event.message }
                 }
 
-                messages[idx] = msg
-                return { ...s, messages }
+                messages[index] = message
+                return { ...state, messages }
               })
             },
           )
@@ -88,6 +94,6 @@ export const useChatStore = create<ChatState>()(
         }
       },
     }),
-    { name: 'codeide-chat', partialize: (s) => ({ messages: s.messages }) },
+    { name: 'codeide-chat', partialize: (state) => ({ messages: state.messages }) },
   ),
 )

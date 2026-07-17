@@ -1,6 +1,6 @@
 export const CORS_HEADERS: HeadersInit = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 }
 
@@ -17,8 +17,7 @@ export function jsonError(message: string, status = 400): Response {
 
 /**
  * Looks up a secret by name, tolerating accidental whitespace/invisible
- * characters and case differences in the stored binding name (easy to
- * introduce when adding secrets from a phone keyboard).
+ * characters and case differences in the stored binding name.
  */
 export function resolveSecret(env: unknown, name: string): string | undefined {
   const record = env as Record<string, unknown>
