@@ -1,31 +1,73 @@
 # BestCode PWA
 
-BestCode бол GitHub-ийн repository/version-control боломжийг VS Code-тэй төстэй mobile editor, diff, build/test, preview болон approval workflow-той нэгтгэх mobile-first IDE.
+BestCode бол GitHub-ийн repository/version-control боломжийг VS Code-тэй төстэй mobile editor, AI chat, diff, build/test, preview болон approval workflow-той нэгтгэх mobile-first IDE.
 
 ```text
-ChatGPT / MCP host
-        ↓
-BestCode Remote MCP Server
-        ↓
-Cloudflare Worker orchestrator
-        ↓
-GitHub repository / Actions
+ChatGPT Custom GPT Actions / MCP host / BestCode DeepSeek chat
+                         ↓
+              BestCode Cloudflare Worker
+                         ↓
+            GitHub repository / Actions
 ```
 
-AI reasoning нь ChatGPT зэрэг MCP host дотор ажиллана. BestCode нь project/repository access, staged changes, approval, Git delivery, build/test task болон PWA dashboard-ийг гүйцэтгэнэ. Legacy in-app DeepSeek chat default-оор унтарсан.
+AI reasoning нь ChatGPT, Claude эсвэл BestCode-ийн дотоод DeepSeek agent дотор ажиллаж болно. BestCode Worker нь project/repository access, staged changes, approval, Git delivery, build/test task болон PWA dashboard-ийг гүйцэтгэнэ.
 
 ## Одоогийн бүтэц
 
 ```text
 frontend/   React + Vite PWA
-             Files / Changes & Tasks / Preview / Settings
+             Chat / Files / Changes & Tasks / Preview / Settings
 
 backend/    Cloudflare Worker
-             Remote MCP / approval API / task API / GitHub API
+             Remote MCP / Custom GPT Actions / AI chat
+             approval API / task API / GitHub API
              Durable Object approval and task storage
 
 .github/    Validate + Test workflows
 ```
+
+## ChatGPT Custom GPT Actions
+
+Custom GPT → Configure → Actions → Import from URL:
+
+```text
+https://best-code-ide.enkhbat194.workers.dev/openapi.json
+```
+
+Authentication:
+
+```text
+Authentication type: API Key
+Auth type: Bearer
+API key: Cloudflare AUTH_TOKEN-ийн яг утга
+```
+
+OpenAPI schema нь MCP tool-уудын input schema-аас автоматаар үүснэ. Custom GPT Actions болон MCP нь нэг executor ашигладаг тул project allowlist, approval, main/master хамгаалалт, conflict check, build/test дүрэм ижил байна.
+
+Эхний шалгалт:
+
+```text
+projects_list
+→ project_get
+→ repository_tree
+→ repository_read_file
+```
+
+Coding workflow:
+
+```text
+repository_create_branch
+→ repository_write_file эсвэл repository_apply_patch
+→ pending_approval
+→ BestCode PWA дээр Approve
+→ repository_commit
+→ repository_push
+→ build_start + test_start
+→ status/logs
+→ repository_create_pull_request
+```
+
+Custom GPT-д approval шийдвэр гаргах action өгдөггүй. Approve/Reject нь зөвхөн BestCode PWA/approval REST UI-аар хийгдэнэ.
 
 ## MCP tool-ууд
 
@@ -49,7 +91,7 @@ backend/    Cloudflare Worker
 - `repository_status`
 - `approval_get`
 
-Write/patch/delete tool нь GitHub branch-ийг өөрчлөхгүй. Бодит файл, base SHA, proposed content болон unified diff-ийг Durable Object-д `pending_approval` operation болгон хадгална. AI өөрийн operation-ийг approve хийж чадахгүй. Approve/Reject зөвхөн authenticated PWA/REST замаар хийгдэнэ.
+Write/patch/delete tool нь GitHub branch-ийг өөрчлөхгүй. Бодит файл, base SHA, proposed content болон unified diff-ийг Durable Object-д `pending_approval` operation болгон хадгална. AI өөрийн operation-ийг approve хийж чадахгүй.
 
 ### Approved Git delivery
 
@@ -59,7 +101,7 @@ Write/patch/delete tool нь GitHub branch-ийг өөрчлөхгүй. Боди
 
 `repository_commit`:
 
-1. operation үнэхээр approved эсэхийг шалгана;
+1. operation approved эсэхийг шалгана;
 2. staged файл бүрийн base SHA одоогийн branch-тэй таарч байгаа эсэхийг шалгана;
 3. Git blob/tree/commit object үүсгэнэ;
 4. branch ref-ийг өөрчлөхгүй;
@@ -87,34 +129,16 @@ Write/patch/delete tool нь GitHub branch-ийг өөрчлөхгүй. Боди
 
 Build/test нь Cloudflare Worker дотор fake terminal ажиллуулахгүй. Worker GitHub Actions workflow dispatch хийгээд durable `task_id` хадгална. Status, run URL, conclusion, bounded paginated log болон cancellation-ийг GitHub API-аас авна.
 
-## Зөв workflow
-
-```text
-main
-→ repository_create_branch(agent/<task>)
-→ repository_tree/search/read
-→ repository_write_file эсвэл repository_apply_patch
-→ pending_approval
-→ PWA Changes дээр exact diff/risk шалгах
-→ Approve
-→ repository_commit
-→ repository_push
-→ build_start + test_start
-→ build_status/test_status + logs
-→ repository_create_pull_request
-```
-
-Main/master руу write, commit, push хийх боломж нээгдэхгүй.
-
 ## PWA
 
+- **Chat** — repository-aware DeepSeek coding agent
 - **Files** — GitHub import, IndexedDB local workspace, CodeMirror editor
 - **Approval** — editor өөрчлөлтийг шууд commit хийхгүйгээр pending approval болгоно
 - **Changes & Tasks** — diff, risk, Approve/Reject, build/test start/status/log/cancel
 - **Preview** — local HTML/JS/TS preview
 - **Settings** — backend URL, Bearer token, owner/repo/branch
 
-Legacy Chat tab UI-аас хасагдсан. `/api/chat` нь `ENABLE_LEGACY_AGENT=true` тохиргоогүй үед HTTP 410 буцаана.
+`/api/chat` default-оор ажиллана. Түр унтраах шаардлагатай бол `ENABLE_LEGACY_AGENT=false` тохируулна.
 
 ## Project registry
 
@@ -131,7 +155,7 @@ ChatGPT owner/repo-г дур мэдэн ашиглахгүй. Зөвхөн `PROJ
     "description": "BestCode repository controller",
     "buildWorkflow": "validate.yml",
     "testWorkflow": "test.yml",
-    "previewUrl": "https://example.workers.dev"
+    "previewUrl": "https://best-code-ide-app1.enkhbat194.workers.dev"
   },
   {
     "id": "czech-app",
@@ -160,23 +184,24 @@ npx wrangler secret put MCP_ALLOWED_ORIGINS
 npx wrangler deploy
 ```
 
-`wrangler.toml` нь `APPROVALS` Durable Object binding болон `approval-store-v1` migration агуулна.
+`wrangler.toml` нь `APPROVALS` Durable Object binding болон migration агуулна.
 
-Legacy agent-ийг зөвхөн түр сэргээх шаардлагатай үед:
+Legacy direct REST write-ийг зөвхөн тусгай compatibility хэрэгцээнд:
 
 ```text
-ENABLE_LEGACY_AGENT=true
 ENABLE_LEGACY_REST_WRITES=true
+REQUIRE_APPROVALS=false
 ```
 
-Эдгээр flag-ийг production-д default-оор бүү асаа. Legacy REST read endpoint-ууд ажиллана, direct write/branch/PR endpoint-ууд flag байхгүй үед HTTP 410 буцаана.
+гэж хоёуланг нь зориудаар тохируулсан үед ашиглана. Production-д эдгээрийг бүү асаа. Safe default нь staged approval workflow.
 
 ## Security
 
 - GitHub token frontend рүү дамжихгүй.
-- `/mcp`, REST болон PWA backend request Bearer `AUTH_TOKEN` шаарддаг.
+- `/mcp`, `/api/actions/*`, REST болон PWA backend request Bearer `AUTH_TOKEN` шаарддаг.
 - Project allowlist ашиглана.
 - Browser-origin MCP request allowlist шалгана.
+- Public `/openapi.json` зөвхөн schema гаргана; secret агуулахгүй.
 - Public health endpoint secret/binding мэдээлэл задруулахгүй.
 - Unified patch exact context таарахгүй бол operation үүсэхгүй.
 - Approval response бүтэн base/proposed content буцаахгүй; bounded diff ба metadata буцаана.
@@ -184,6 +209,7 @@ ENABLE_LEGACY_REST_WRITES=true
 - Force push ашиглахгүй.
 - Base SHA болон branch parent conflict илэрвэл delivery зогсоно.
 - Pull Request-ийн өмнө build/test success шаардлагатай.
+- AI approval decision action авахгүй.
 
 Одоогийн Bearer authentication нь single-user prototype. OAuth, per-user identity, replay protection, rate limiting болон бүрэн audit history дараагийн security phase-д орно.
 
@@ -209,7 +235,7 @@ ENABLE_LEGACY_REST_WRITES=true
 
 ## Одоогийн хязгаар
 
-- Production deployment trigger/status approval flow хараахан нэмэгдээгүй.
+- OpenAPI Actions schema deploy хийсний дараа ChatGPT editor дээр бодитоор import/test хийх шаардлагатай.
 - Remote React/Vite/Next preview runner байхгүй; `preview_get` зөвхөн configured URL буцаана.
 - MCP OAuth болон олон хэрэглэгчийн permission байхгүй.
 - Rate limiting, replay protection, full durable audit timeline дараагийн шатанд орно.
