@@ -77,6 +77,28 @@ export async function markPullRequest(
   })
 }
 
+export async function markDeploymentStarted(
+  env: Env,
+  operationId: string,
+  taskId: string,
+): Promise<ApprovalOperation> {
+  return request<ApprovalOperation>(env, `/operations/${encodeURIComponent(operationId)}/deployment-started`, {
+    method: 'POST',
+    body: JSON.stringify({ task_id: taskId }),
+  })
+}
+
+export async function markDeploymentFinished(
+  env: Env,
+  operationId: string,
+  success: boolean,
+): Promise<ApprovalOperation> {
+  return request<ApprovalOperation>(env, `/operations/${encodeURIComponent(operationId)}/deployment-finished`, {
+    method: 'POST',
+    body: JSON.stringify({ success }),
+  })
+}
+
 export async function createTask(env: Env, task: TaskRecord): Promise<TaskRecord> {
   return request<TaskRecord>(env, '/tasks', { method: 'POST', body: JSON.stringify(task) })
 }
