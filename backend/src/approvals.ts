@@ -1,6 +1,36 @@
 import { cancelApproval, decideApproval, getApproval, listApprovals } from './approvalClient'
+import type { ApprovalOperation } from './approvalStore'
 import { jsonError, jsonResponse } from './utils'
 import type { Env } from './types'
+
+function publicOperation(operation: ApprovalOperation) {
+  return {
+    operation_id: operation.operation_id,
+    project_id: operation.project_id,
+    repository: operation.repository,
+    branch: operation.branch,
+    title: operation.title,
+    summary: operation.summary,
+    status: operation.status,
+    approval_required: operation.approval_required,
+    risk: operation.risk,
+    risk_reasons: operation.risk_reasons,
+    changes: operation.changes.map((change) => ({
+      action: change.action,
+      path: change.path,
+      base_sha: change.base_sha,
+      diff: change.diff.slice(0, 100_000),
+      diff_truncated: change.diff.length > 100_000,
+    })),
+    created_at: operation.created_at,
+    updated_at: operation.updated_at,
+    expires_at: operation.expires_at,
+    decided_at: operation.decided_at,
+    decision_actor: operation.decision_actor,
+    commit_sha: operation.commit_sha,
+    commit_url: operation.commit_url,
+  }
+}
 
 export async function handleApprovals(req: Request, env: Env, url: URL): Promise<Response | null> {
   if (url.pathname === '/api/approvals' && req.method === 'GET') {
@@ -11,7 +41,11 @@ export async function handleApprovals(req: Request, env: Env, url: URL): Promise
         projectId: url.searchParams.get('project_id') ?? undefined,
         limit,
       })
-      return jsonResponse(result)
+      return jsonResponse({
+        items: result.items.map(publicOperation),
+        count: result.count,
+        total: result.total,
+      })
     } catch (error) {
       return jsonError(error instanceof Error ? error.message : String(error), 502)
     }
@@ -23,18 +57,19 @@ export async function handleApprovals(req: Request, env: Env, url: URL): Promise
   const action = match[2]
 
   try {
-    if (!action && req.method === 'GET') return jsonResponse(await getApproval(env, operationId))
+    if (!action && req.method === 'GET') return jsonResponse(publicOperation(await getApproval(env, operationId)))
 
     if (action === 'decision' && req.method === 'POST') {
       const body = (await req.json().catch(() => null)) as { decision?: string; actor?: string } | null
       if (body?.decision !== 'approved' && body?.decision !== 'rejected') {
         return jsonError('decision must be approved or rejected')
       }
-      return jsonResponse(await decideApproval(env, operationId, body.decision, body.actor?.trim() || 'bestcode-user'))
+      const operation = await decideApproval(env, operationId, body.decision, body.actor?.trim() || 'bestcode-user')
+      return jsonResponse(publicOperation(operation))
     }
 
     if (action === 'cancel' && req.method === 'POST') {
-      return jsonResponse(await cancelApproval(env, operationId))
+      return jsonResponse(publicOperation(await cancelApproval(env, operationId)))
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
