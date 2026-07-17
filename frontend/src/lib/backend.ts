@@ -6,7 +6,16 @@ interface CommitParams {
   message: string
 }
 
-export async function commitFile({ path, content, message }: CommitParams): Promise<void> {
+export interface StagedCommitResult {
+  status: string
+  approvalRequired: boolean
+  operationId: string
+  branch: string
+  risk: 'normal' | 'high'
+  diff: string
+}
+
+export async function commitFile({ path, content, message }: CommitParams): Promise<StagedCommitResult> {
   const { backendUrl, authToken, owner, repo, branch } = useSettingsStore.getState()
   if (!backendUrl || !authToken) throw new Error('Backend URL/token тохируулаагүй байна')
   if (!owner || !repo) throw new Error('GitHub owner/repo тохируулаагүй байна')
@@ -16,8 +25,7 @@ export async function commitFile({ path, content, message }: CommitParams): Prom
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authToken}` },
     body: JSON.stringify({ owner, repo, branch, path: path.replace(/^\//, ''), content, message }),
   })
-  if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText)
-    throw new Error(`Push амжилтгүй (${res.status}): ${text}`)
-  }
+  const text = await res.text()
+  if (!res.ok) throw new Error(`Өөрчлөлт хадгалах амжилтгүй (${res.status}): ${text || res.statusText}`)
+  return JSON.parse(text) as StagedCommitResult
 }
