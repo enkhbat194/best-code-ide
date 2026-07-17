@@ -7,13 +7,13 @@ async function toolResponse(name: string, args: Record<string, unknown>, env: En
   if (!githubToken) return jsonError('GITHUB_TOKEN secret is missing', 500)
   try {
     const result = await executeTool(name, args, githubToken, ctx)
-    return jsonResponse({ result })
+    return jsonResponse({ result, branch: ctx.branch })
   } catch (err) {
     return jsonError(err instanceof Error ? err.message : String(err), 502)
   }
 }
 
-/** REST surface used by ChatGPT Actions and other external AI clients. */
+/** REST surface used by the mobile IDE, ChatGPT Actions, and other external AI clients. */
 export async function handleRest(req: Request, env: Env, url: URL): Promise<Response | null> {
   if (url.pathname === '/api/repos' && req.method === 'POST') {
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>
@@ -61,6 +61,11 @@ export async function handleRest(req: Request, env: Env, url: URL): Promise<Resp
     return toolResponse('write_file', body, env, ctx)
   }
 
+  if (sub === '/files/commit' && req.method === 'POST') {
+    const body = (await req.json().catch(() => ({}))) as { message?: string; changes?: unknown[] }
+    return toolResponse('commit_files', body, env, ctx)
+  }
+
   if (sub === '/file' && req.method === 'DELETE') {
     const path = url.searchParams.get('path') ?? ''
     const message = url.searchParams.get('message') ?? undefined
@@ -92,12 +97,34 @@ export async function handleRest(req: Request, env: Env, url: URL): Promise<Resp
   }
 
   if (sub === '/validation' && req.method === 'POST') {
-    const body = (await req.json().catch(() => ({}))) as { branch?: string }
+    const body = (await req.json().catch(() => ({}))) as { branch?: string; wait_seconds?: number }
     return toolResponse('run_validation', body, env, ctx)
   }
 
   if (sub === '/validation' && req.method === 'GET') {
     return toolResponse('validation_status', { branch: url.searchParams.get('branch') ?? branch }, env, ctx)
+  }
+
+  if (sub === '/validation/wait' && (req.method === 'GET' || req.method === 'POST')) {
+    const body = req.method === 'POST'
+      ? ((await req.json().catch(() => ({}))) as { branch?: string; wait_seconds?: number })
+      : { branch: url.searchParams.get('branch') ?? branch, wait_seconds: Number(url.searchParams.get('wait_seconds') ?? '35') }
+    return toolResponse('wait_validation', body, env, ctx)
+  }
+
+  if (sub === '/validation/details' && req.method === 'GET') {
+    return toolResponse('validation_details', { run_id: Number(url.searchParams.get('run_id') ?? '0') }, env, ctx)
+  }
+
+  if (sub === '/pulls' && req.method === 'POST') {
+    const body = (await req.json().catch(() => ({}))) as {
+      title?: string
+      head?: string
+      base?: string
+      body?: string
+      draft?: boolean
+    }
+    return toolResponse('create_pull_request', body, env, ctx)
   }
 
   return null
