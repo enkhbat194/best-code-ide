@@ -66,6 +66,11 @@ export async function markPushed(env: Env, operationId: string): Promise<Approva
   return request<ApprovalOperation>(env, `/operations/${encodeURIComponent(operationId)}/pushed`, { method: 'POST' })
 }
 
+
+export async function markCompleted(env: Env, operationId: string): Promise<ApprovalOperation> {
+  return request<ApprovalOperation>(env, `/operations/${encodeURIComponent(operationId)}/completed`, { method: 'POST' })
+}
+
 export async function markPullRequest(
   env: Env,
   operationId: string,

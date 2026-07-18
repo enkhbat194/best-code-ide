@@ -7,6 +7,7 @@ export type ApprovalStatus =
   | 'commit_prepared'
   | 'pushed'
   | 'pull_request_opened'
+  | 'completed'
 
 export type ChangeAction = 'create' | 'update' | 'delete'
 export type RiskLevel = 'normal' | 'high'
@@ -45,6 +46,7 @@ export interface ApprovalOperation {
   pushed_at?: string
   pr_number?: number
   pr_url?: string
+  completed_at?: string
 }
 
 export interface TaskRecord {
@@ -207,6 +209,22 @@ export class ApprovalStore {
           status: 'pushed',
           updated_at: new Date().toISOString(),
           pushed_at: new Date().toISOString(),
+        }
+        await this.state.storage.put(operationKey(operationId), updated)
+        return json(updated)
+      }
+
+
+      if (request.method === 'POST' && segments[2] === 'completed') {
+        if (operation.status !== 'approved') {
+          return json({ error: `Operation cannot complete from status ${operation.status}`, operation }, 409)
+        }
+        const now = new Date().toISOString()
+        const updated: ApprovalOperation = {
+          ...operation,
+          status: 'completed',
+          updated_at: now,
+          completed_at: now,
         }
         await this.state.storage.put(operationKey(operationId), updated)
         return json(updated)

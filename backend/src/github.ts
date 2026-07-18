@@ -180,6 +180,82 @@ export interface BranchInfo {
   protected: boolean
 }
 
+
+export async function getBranch(
+  token: string,
+  owner: string,
+  repo: string,
+  branch: string,
+): Promise<BranchInfo | null> {
+  const res = await gh(token, `${repoPath(owner, repo)}/branches/${contentPath(branch)}`)
+  if (res.status === 404) return null
+  if (!res.ok) throw new Error(`GitHub branch error ${res.status}: ${await res.text()}`)
+  const data = (await res.json()) as { name: string; protected: boolean; commit: { sha: string } }
+  return { name: data.name, sha: data.commit.sha, protected: data.protected }
+}
+
+export interface BranchComparison {
+  status: 'ahead' | 'behind' | 'diverged' | 'identical'
+  ahead_by: number
+  behind_by: number
+  total_commits: number
+  commits: { sha: string; message: string; url: string }[]
+  files: { filename: string; status: string; additions: number; deletions: number; changes: number }[]
+}
+
+export async function compareBranchDetails(
+  token: string,
+  owner: string,
+  repo: string,
+  base: string,
+  head: string,
+): Promise<BranchComparison> {
+  const res = await gh(
+    token,
+    `${repoPath(owner, repo)}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`,
+  )
+  if (!res.ok) throw new Error(`GitHub compare error ${res.status}: ${await res.text()}`)
+  const data = (await res.json()) as {
+    status: BranchComparison['status']
+    ahead_by: number
+    behind_by: number
+    total_commits: number
+    commits?: { sha: string; html_url: string; commit: { message: string } }[]
+    files?: { filename: string; status: string; additions: number; deletions: number; changes: number }[]
+  }
+  return {
+    status: data.status,
+    ahead_by: data.ahead_by,
+    behind_by: data.behind_by,
+    total_commits: data.total_commits,
+    commits: (data.commits ?? []).slice(0, 100).map((item) => ({
+      sha: item.sha,
+      message: item.commit.message,
+      url: item.html_url,
+    })),
+    files: (data.files ?? []).slice(0, 300).map((item) => ({
+      filename: item.filename,
+      status: item.status,
+      additions: item.additions,
+      deletions: item.deletions,
+      changes: item.changes,
+    })),
+  }
+}
+
+export async function deleteBranch(
+  token: string,
+  owner: string,
+  repo: string,
+  branch: string,
+): Promise<void> {
+  const res = await gh(token, `${repoPath(owner, repo)}/git/refs/heads/${contentPath(branch)}`, {
+    method: 'DELETE',
+  })
+  if (res.status === 404) throw new Error(`Branch not found: ${branch}`)
+  if (!res.ok) throw new Error(`Delete branch error ${res.status}: ${await res.text()}`)
+}
+
 export async function listBranches(token: string, owner: string, repo: string, limit = 30): Promise<BranchInfo[]> {
   const res = await gh(token, `${repoPath(owner, repo)}/branches?per_page=${Math.min(Math.max(limit, 1), 100)}`)
   if (!res.ok) throw new Error(`GitHub branch error ${res.status}: ${await res.text()}`)
