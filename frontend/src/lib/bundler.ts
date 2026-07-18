@@ -15,25 +15,45 @@ export interface BundleFile {
   content: string
 }
 
-/** Bundles a local entry file against the on-device virtual filesystem — no network fetches. */
-export async function bundleForPreview(entryPath: string, files: BundleFile[]): Promise<string> {
+export interface BundleResult {
+  code: string
+  /** Bare npm package roots the code imports (e.g. "react", "@scope/pkg"). */
+  packages: string[]
+}
+
+/**
+ * Bundles a local entry file against the on-device virtual filesystem.
+ * Local files are bundled inline; bare npm imports (e.g. "react") are kept
+ * external so the browser can load them from esm.sh via an import map. This
+ * lets real library-based apps (React, etc.) run in the preview.
+ */
+export async function bundleForPreview(entryPath: string, files: BundleFile[]): Promise<BundleResult> {
   await ensureInit()
   const fileMap = new Map(files.map((f) => [f.path, f.content]))
+  const packages = new Set<string>()
 
   const result = await esbuild.build({
     entryPoints: [entryPath],
     bundle: true,
     write: false,
-    format: 'iife',
+    format: 'esm',
+    jsx: 'automatic',
     define: { 'process.env.NODE_ENV': '"development"' },
-    plugins: [virtualFsPlugin(fileMap)],
+    plugins: [virtualFsPlugin(fileMap, packages)],
     logLevel: 'silent',
   })
 
-  return result.outputFiles[0].text
+  return { code: result.outputFiles[0].text, packages: [...packages] }
 }
 
-function virtualFsPlugin(fileMap: Map<string, string>): esbuild.Plugin {
+/** Extracts the importable package root: "react/jsx-runtime" → "react", "@a/b/c" → "@a/b". */
+function packageRoot(specifier: string): string {
+  const parts = specifier.split('/')
+  if (specifier.startsWith('@')) return parts.slice(0, 2).join('/')
+  return parts[0]
+}
+
+function virtualFsPlugin(fileMap: Map<string, string>, packages: Set<string>): esbuild.Plugin {
   return {
     name: 'virtual-fs',
     setup(build) {
@@ -41,10 +61,10 @@ function virtualFsPlugin(fileMap: Map<string, string>): esbuild.Plugin {
         if (args.kind === 'entry-point') {
           return { path: normalizePath(args.path), namespace: 'vfs' }
         }
-        if (!args.path.startsWith('.')) {
-          return {
-            errors: [{ text: `npm package imports aren't available in local preview yet: "${args.path}"` }],
-          }
+        // Bare specifier (npm package) — keep external, load via import map.
+        if (!args.path.startsWith('.') && !args.path.startsWith('/')) {
+          packages.add(packageRoot(args.path))
+          return { path: args.path, external: true }
         }
         const dir = args.importer.slice(0, args.importer.lastIndexOf('/'))
         const resolved = normalizePath(`${dir}/${args.path}`)

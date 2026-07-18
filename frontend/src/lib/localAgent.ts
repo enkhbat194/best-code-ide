@@ -174,9 +174,12 @@ function systemPrompt(): string {
     `does NOT touch GitHub. The configured GitHub repository is ${repoLine}; use pull_from_github / ` +
     `push_to_github ONLY when the user explicitly asks to sync or push. ` +
     `When the user asks for a program, write the file(s) locally and tell them to open the Preview tab to run it. ` +
-    `For a runnable browser demo prefer a single self-contained .html file, or a plain .js file for console output. ` +
+    `The Preview tab can run: (1) .html / .js / .jsx / .ts / .tsx in the browser — npm packages like react work, ` +
+    `they load automatically from esm.sh, so you can write a real React app (an index.html with a module script, ` +
+    `or a .tsx entry that imports react and react-dom/client); and (2) .py files via Python (Pyodide) with stdout ` +
+    `shown in the console. Pick the language that fits the request. ` +
     `The preview runs on a narrow phone screen: always write mobile-responsive HTML/CSS — moderate font sizes, ` +
-    `width:100%, no fixed pixel widths, flex/grid centering, and test-safe overflow (no horizontal scrolling). ` +
+    `width:100%, no fixed pixel widths, flex/grid centering, and no horizontal scrolling. ` +
     `Reply in the user's language (usually Mongolian). Keep replies short and concrete.`
   )
 }

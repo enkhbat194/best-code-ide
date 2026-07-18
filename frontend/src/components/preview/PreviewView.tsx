@@ -5,7 +5,7 @@ import { readFile } from '../../lib/fs'
 import { buildPreviewDoc } from '../../lib/previewHtml'
 import styles from './PreviewView.module.css'
 
-const RUNNABLE_EXT = ['html', 'js', 'jsx', 'ts', 'tsx']
+const RUNNABLE_EXT = ['html', 'js', 'jsx', 'ts', 'tsx', 'py']
 
 interface ConsoleLine {
   level: string
@@ -64,7 +64,7 @@ export function PreviewView() {
     return (
       <div className={styles.wrap}>
         <div className={styles.empty}>
-          Ажиллуулах боломжтой файл алга (.html / .js / .jsx / .ts / .tsx). Files tab-с файл нэмнэ үү.
+          Ажиллуулах боломжтой файл алга (.html / .js / .jsx / .ts / .tsx / .py). Files tab-с файл нэмнэ үү.
         </div>
       </div>
     )
