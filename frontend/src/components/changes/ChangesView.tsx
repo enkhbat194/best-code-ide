@@ -1,19 +1,23 @@
 import { useEffect, useState } from 'react'
-import { GitCompare, PlayCircle, RefreshCw, ShieldCheck, ShieldX, XCircle } from 'lucide-react'
+import { GitBranch, GitCompare, PlayCircle, RefreshCw, ShieldCheck, ShieldX, Trash2, XCircle } from 'lucide-react'
 import { useSettingsStore } from '../../store/settingsStore'
 import {
   cancelRepositoryTask,
+  completeBranchDeletion,
   compareBranches,
   decideApproval,
+  listBranches,
   listApprovals,
   listRepositoryTasks,
   readRepositoryTaskLogs,
   refreshRepositoryTask,
+  requestBranchDeletion,
   runValidation,
   startRepositoryTask,
   validationStatus,
   waitValidation,
   type ApprovalOperation,
+  type RepositoryBranch,
   type RepositoryTask,
 } from '../../lib/repoAgent'
 import styles from './ChangesView.module.css'
@@ -31,6 +35,7 @@ export function ChangesView() {
   const [busy, setBusy] = useState(false)
   const [approvals, setApprovals] = useState<ApprovalOperation[]>([])
   const [tasks, setTasks] = useState<RepositoryTask[]>([])
+  const [branches, setBranches] = useState<RepositoryBranch[]>([])
 
   const protectedBranch = branch === 'main' || branch === 'master'
 
@@ -55,9 +60,13 @@ export function ChangesView() {
     setTasks(await listRepositoryTasks())
   }
 
+  async function refreshBranches() {
+    setBranches(await listBranches())
+  }
+
   useEffect(() => {
     if (!owner || !repo) return
-    void Promise.all([refreshApprovals(), refreshTasks()]).catch((err) => {
+    void Promise.all([refreshApprovals(), refreshTasks(), refreshBranches()]).catch((err) => {
       setError(err instanceof Error ? err.message : String(err))
     })
   }, [owner, repo])
@@ -77,6 +86,46 @@ export function ChangesView() {
           Main/master дээр write, commit, push болон task delivery хийхгүй. Эхлээд agent/&lt;task&gt; working branch сонгоно.
         </div>
       )}
+
+      <section className={styles.section}>
+        <div className={styles.sectionHeading}>
+          <h2><GitBranch size={16} /> Branch cleanup</h2>
+          <button
+            className={styles.compact}
+            disabled={busy}
+            onClick={() => execute(async () => {
+              await refreshBranches()
+              setStatus('Branch жагсаалт шинэчлэгдлээ.')
+            })}
+          >
+            <RefreshCw size={14} /> Шинэчлэх
+          </button>
+        </div>
+        <div className={styles.muted}>
+          Устгах хүсэлт нь эхлээд SHA-pinned өндөр эрсдэлийн approval үүсгэнэ. Approve дарахад л branch устна.
+        </div>
+        <div className={styles.branchList}>
+          {branches.map((item) => (
+            <article className={styles.branchCard} key={item.name}>
+              <div className={styles.branchMeta}>
+                <strong>{item.name}</strong>
+                <span>{item.sha.slice(0, 8)} · {item.default ? 'default' : item.protected ? 'protected' : 'working'}</span>
+              </div>
+              <button
+                className={styles.danger}
+                disabled={busy || item.default || item.protected}
+                onClick={() => execute(async () => {
+                  const operation = await requestBranchDeletion(item.name)
+                  await refreshApprovals()
+                  setStatus(`Устгах approval үүслээ: ${item.name} · ${operation.operation_id}`)
+                })}
+              >
+                <Trash2 size={14} /> Устгах хүсэлт
+              </button>
+            </article>
+          ))}
+        </div>
+      </section>
 
       <section className={styles.section}>
         <div className={styles.sectionHeading}>
@@ -122,8 +171,16 @@ export function ChangesView() {
                   disabled={busy}
                   onClick={() => execute(async () => {
                     await decideApproval(operation.operation_id, 'approved')
+                    if (operation.risk_reasons.includes('branch_deletion')) {
+                      await completeBranchDeletion(operation.branch, operation.operation_id)
+                      await refreshBranches()
+                    }
                     await refreshApprovals()
-                    setStatus(`Approved: ${operation.operation_id}. ChatGPT approval-тай дараагийн үйлдлийг үргэлжлүүлж болно.`)
+                    setStatus(
+                      operation.risk_reasons.includes('branch_deletion')
+                        ? `Branch устлаа: ${operation.branch}`
+                        : `Approved: ${operation.operation_id}. ChatGPT approval-тай дараагийн үйлдлийг үргэлжлүүлж болно.`,
+                    )
                   })}
                 >
                   <ShieldCheck size={14} /> Approve

@@ -158,6 +158,45 @@
   gap: 10px;
 }
 
+.branchList {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.branchCard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg);
+}
+
+.branchMeta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.branchMeta strong,
+.branchMeta span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.branchMeta strong {
+  font: 12px/1.4 var(--mono);
+}
+
+.branchMeta span {
+  color: var(--text-dim);
+  font: 10.5px/1.4 var(--mono);
+}
+
 .approvalCard {
   display: flex;
   flex-direction: column;
