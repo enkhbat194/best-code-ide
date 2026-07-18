@@ -1,5 +1,5 @@
 import * as gh from './github'
-import { createApproval, getApproval, listApprovals } from './approvalClient'
+import { createApproval, getApproval, listApprovals, markCompleted } from './approvalClient'
 import type { ApprovalOperation, RiskLevel, StagedChange } from './approvalStore'
 import { createUnifiedDiff, applyUnifiedPatch } from './patch'
 import { getProject, type ProjectConfig } from './projects'
@@ -114,6 +114,25 @@ export const safeWriteMcpTools = [
         summary: { type: 'string' },
       },
       required: ['project_id', 'branch', 'path'],
+    },
+    outputSchema,
+    annotations: destructiveAnnotations,
+  },
+
+  {
+    name: 'repository_delete_branch',
+    title: 'Delete repository branch',
+    description: 'Create a high-risk branch-deletion approval, then delete only the unchanged approved non-default, non-protected branch.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string' },
+        branch: { type: 'string' },
+        approval_operation_id: { type: 'string' },
+        title: { type: 'string' },
+        summary: { type: 'string' },
+      },
+      required: ['project_id', 'branch'],
     },
     outputSchema,
     annotations: destructiveAnnotations,
@@ -235,8 +254,109 @@ function operationSummary(args: Record<string, unknown>, fallback: string): stri
   return typeof args.summary === 'string' && args.summary.trim() ? args.summary.trim().slice(0, 1000) : fallback
 }
 
+
+const BRANCH_DELETION_REASON = 'branch_deletion'
+
+function branchReason(branch: string): string {
+  return `target_branch:${branch}`
+}
+
+function branchShaReason(sha: string): string {
+  return `target_sha:${sha}`
+}
+
+function assertBranchDeletionOperation(
+  operation: ApprovalOperation,
+  project: ProjectConfig,
+  branch: string,
+): void {
+  const matches =
+    operation.project_id === project.id &&
+    operation.repository.owner === project.owner &&
+    operation.repository.repo === project.repo &&
+    operation.branch === branch &&
+    operation.changes.length === 0 &&
+    operation.risk === 'high' &&
+    operation.risk_reasons.includes(BRANCH_DELETION_REASON) &&
+    operation.risk_reasons.includes(branchReason(branch)) &&
+    operation.risk_reasons.some((reason) => reason.startsWith('target_sha:'))
+  if (!matches) throw new Error('BRANCH_DELETE_APPROVAL_MISMATCH: approval does not match the current project and branch')
+}
+
+function validateDeletableBranch(branch: string, project: ProjectConfig): void {
+  validateWorkingBranch(branch)
+  if (branch === project.defaultBranch || protectedBranch(branch)) {
+    throw new Error('PROTECTED_BRANCH: the project default branch and main/master cannot be deleted')
+  }
+}
+
+async function createBranchDeletionApproval(
+  env: Env,
+  project: ProjectConfig,
+  branch: string,
+  sha: string,
+  args: Record<string, unknown>,
+): Promise<McpWriteToolResult> {
+  const now = new Date()
+  const operation: ApprovalOperation = {
+    operation_id: crypto.randomUUID(),
+    project_id: project.id,
+    repository: repoFields(project),
+    branch,
+    title: operationTitle(args, `Delete branch ${branch}`),
+    summary: operationSummary(args, `Permanently delete branch ${branch} at ${sha}.`),
+    status: 'pending_approval',
+    approval_required: true,
+    risk: 'high',
+    risk_reasons: [BRANCH_DELETION_REASON, branchReason(branch), branchShaReason(sha)],
+    changes: [],
+    created_at: now.toISOString(),
+    updated_at: now.toISOString(),
+    expires_at: new Date(now.getTime() + OPERATION_TTL_MS).toISOString(),
+  }
+  await createApproval(env, operation)
+  return finish({
+    ok: true,
+    operation_id: operation.operation_id,
+    status: operation.status,
+    project_id: project.id,
+    repository: repoFields(project),
+    branch,
+    approval_required: true,
+    result: {
+      branch,
+      sha,
+      risk: operation.risk,
+      risk_reasons: operation.risk_reasons,
+      expires_at: operation.expires_at,
+      next_action: 'The user must approve this exact branch deletion in BestCode, then call repository_delete_branch again with approval_operation_id.',
+    },
+  })
+}
+
+function assertBranchDeletionApproval(
+  operation: ApprovalOperation,
+  project: ProjectConfig,
+  branch: string,
+  sha: string,
+): void {
+  assertBranchDeletionOperation(operation, project, branch)
+  if (!operation.risk_reasons.includes(branchShaReason(sha))) {
+    throw new Error('BRANCH_DELETE_APPROVAL_MISMATCH: approval does not match the current branch SHA')
+  }
+  if (operation.status !== 'approved') {
+    throw new Error(`BRANCH_DELETE_APPROVAL_REQUIRED: operation must be approved; current status is ${operation.status}`)
+  }
+}
+
 function classify(error: unknown) {
   const message = error instanceof Error ? error.message : String(error)
+  if (message.startsWith('BRANCH_DELETE_APPROVAL_MISMATCH')) {
+    return { code: 'BRANCH_DELETE_APPROVAL_MISMATCH', message, retryable: false, action_required: 'Create a new deletion approval for the branch current SHA.' }
+  }
+  if (message.startsWith('BRANCH_DELETE_APPROVAL_REQUIRED')) {
+    return { code: 'BRANCH_DELETE_APPROVAL_REQUIRED', message, retryable: false, action_required: 'Approve the exact branch deletion operation in BestCode.' }
+  }
   if (message.startsWith('PROTECTED_BRANCH')) {
     return { code: 'PROTECTED_BRANCH', message, retryable: false, action_required: 'Call repository_create_branch and retry on the new working branch.' }
   }
@@ -339,6 +459,52 @@ export async function executeSafeWriteMcpTool(
         approval_required: false,
         result: { name: created.name, sha: created.sha, protected: created.protected, from_branch: from },
       })
+    }
+
+
+    if (name === 'repository_delete_branch') {
+      branch = requireString(args, 'branch')
+      validateDeletableBranch(branch, project)
+      const approvalId = typeof args.approval_operation_id === 'string' ? args.approval_operation_id.trim() : ''
+
+      if (approvalId) {
+        const operation = await getApproval(env, approvalId)
+        if (operation.status === 'completed') {
+          assertBranchDeletionOperation(operation, project, branch)
+          return finish({
+            ok: true,
+            operation_id: operation.operation_id,
+            status: operation.status,
+            project_id: project.id,
+            repository: repoFields(project),
+            branch,
+            approval_required: true,
+            result: { branch, already_completed: true, completed_at: operation.completed_at ?? null },
+          })
+        }
+
+        const current = await gh.getBranch(token, project.owner, project.repo, branch)
+        if (!current) throw new Error(`Branch not found: ${branch}`)
+        if (current.protected) throw new Error('PROTECTED_BRANCH: GitHub reports this branch as protected')
+        assertBranchDeletionApproval(operation, project, branch, current.sha)
+        await gh.deleteBranch(token, project.owner, project.repo, branch)
+        const completed = await markCompleted(env, operation.operation_id)
+        return finish({
+          ok: true,
+          operation_id: completed.operation_id,
+          status: completed.status,
+          project_id: project.id,
+          repository: repoFields(project),
+          branch,
+          approval_required: true,
+          result: { branch, deleted_sha: current.sha, completed_at: completed.completed_at ?? null },
+        })
+      }
+
+      const current = await gh.getBranch(token, project.owner, project.repo, branch)
+      if (!current) throw new Error(`Branch not found: ${branch}`)
+      if (current.protected) throw new Error('PROTECTED_BRANCH: GitHub reports this branch as protected')
+      return createBranchDeletionApproval(env, project, branch, current.sha, args)
     }
 
     if (name === 'repository_diff' || name === 'approval_get') {

@@ -2,6 +2,7 @@ import { deliveryMcpTools } from './mcpDeliveryTools'
 import { deploymentMcpTools } from './mcpDeploymentTools'
 import { readOnlyMcpTools } from './mcpReadTools'
 import { safeWriteMcpTools } from './mcpWriteTools'
+import { buildActionDescription } from './openapiDescription'
 
 const ACTION_TOOLS = [...readOnlyMcpTools, ...safeWriteMcpTools, ...deliveryMcpTools, ...deploymentMcpTools]
 
@@ -22,6 +23,10 @@ function safetyNote(tool: (typeof ACTION_TOOLS)[number]): string {
   if (tool.name === 'repository_write_file' || tool.name === 'repository_apply_patch' || tool.name === 'repository_delete_file') {
     return 'This action stages a diff only. It does not commit or push. The user must approve the operation in BestCode.'
   }
+
+  if (tool.name === 'repository_delete_branch') {
+    return 'The first call creates a high-risk approval. A second call may delete only the same unchanged approved non-default, non-protected branch.'
+  }
   if (tool.name === 'repository_commit') {
     return 'This action requires an already approved code-change operation and prepares a commit object without moving the branch ref.'
   }
@@ -41,7 +46,7 @@ function actionPaths(): Record<string, object> {
       post: {
         operationId: tool.name,
         summary: tool.title,
-        description: `${tool.description}\n\n${safetyNote(tool)}`,
+        description: buildActionDescription(tool.description, safetyNote(tool)),
         tags: [tagFor(tool.name)],
         security: [{ bearerAuth: [] }],
         requestBody: {
@@ -108,7 +113,7 @@ export function openapiSpec(origin: string): object {
       title: 'BestCode Repository Controller',
       description:
         'Project-scoped GitHub and IDE controller for ChatGPT Actions. Use projects_list first, work only on agent/<task> branches, stage code changes for user approval, commit, push, build, test, open a draft pull request, then request a separate production deployment approval.',
-      version: '0.7.0',
+      version: '0.8.0',
     },
     servers: [{ url: origin }],
     security: [{ bearerAuth: [] }],

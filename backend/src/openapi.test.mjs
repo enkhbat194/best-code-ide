@@ -2,27 +2,56 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-const openapiSource = readFileSync(new URL('./openapi.ts', import.meta.url), 'utf8')
+import { deploymentMcpTools } from './mcpDeploymentTools.ts'
+import { openapiSpec } from './openapi.ts'
+
 const deploymentSource = readFileSync(new URL('./mcpDeploymentTools.ts', import.meta.url), 'utf8')
 
-test('OpenAPI source registers deployment tools and schemas', () => {
-  assert.match(openapiSource, /import \{ deploymentMcpTools \} from '\.\/mcpDeploymentTools'/)
-  assert.match(openapiSource, /\.\.\.deploymentMcpTools/)
-  assert.match(openapiSource, /version: '0\.7\.0'/)
-  assert.match(openapiSource, /name: 'Deployment'/)
-  assert.match(openapiSource, /schemas: \{/)
-  assert.match(openapiSource, /first call creates a separate high-risk approval/i)
+test('generated OpenAPI preserves version, schemas, and bearer authentication', () => {
+  const spec = openapiSpec('https://bestcode.test')
+
+  assert.equal(spec.openapi, '3.1.0')
+  assert.equal(spec.info.version, '0.8.0')
+  assert.deepEqual(spec.security, [{ bearerAuth: [] }])
+  assert.deepEqual(spec.components.securitySchemes.bearerAuth, {
+    type: 'http',
+    scheme: 'bearer',
+    bearerFormat: 'BestCode AUTH_TOKEN',
+  })
+  assert.ok(spec.components.schemas.ToolEnvelope)
+  assert.ok(spec.components.schemas.ToolError)
+  assert.ok(spec.components.schemas.HttpError)
+
+  const operations = Object.values(spec.paths).map((path) => path.post)
+  assert.ok(operations.length > 0)
+  assert.equal(new Set(operations.map((operation) => operation.operationId)).size, operations.length)
+  assert.equal(operations.some((operation) => operation.operationId === 'approval_decide'), false)
+  for (const operation of operations) {
+    assert.deepEqual(operation.security, [{ bearerAuth: [] }])
+    assert.equal(
+      operation.responses['200'].content['application/json'].schema.$ref,
+      '#/components/schemas/ToolEnvelope',
+    )
+  }
 })
 
-test('deployment tool names are explicit and unique', () => {
-  const names = [...deploymentSource.matchAll(/name: '(deployment_[a-z_]+)'/g)].map((match) => match[1])
+test('deployment tools remain explicit and unique in the generated schema', () => {
+  const names = deploymentMcpTools.map((tool) => tool.name)
   assert.deepEqual(names, ['deployment_start', 'deployment_status', 'deployment_logs'])
   assert.equal(new Set(names).size, names.length)
+
+  const spec = openapiSpec('https://bestcode.test')
+  for (const name of names) {
+    assert.equal(spec.paths[`/api/actions/${name}`].post.operationId, name)
+    assert.deepEqual(spec.paths[`/api/actions/${name}`].post.tags, ['Deployment'])
+  }
 })
 
 test('deployment start requires project and supports bounded targets', () => {
-  assert.match(deploymentSource, /required: \['project_id'\]/)
-  assert.match(deploymentSource, /enum: \['backend', 'frontend', 'all'\]/)
+  const start = deploymentMcpTools.find((tool) => tool.name === 'deployment_start')
+  assert.ok(start)
+  assert.deepEqual(start.inputSchema.required, ['project_id'])
+  assert.deepEqual(start.inputSchema.properties.target.enum, ['backend', 'frontend', 'all'])
   assert.match(deploymentSource, /Deployment branch must equal the project default branch/)
   assert.match(deploymentSource, /production_deployment/)
 })

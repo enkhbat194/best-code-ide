@@ -28,6 +28,7 @@ export interface ApprovalOperation {
     | 'commit_prepared'
     | 'pushed'
     | 'pull_request_opened'
+    | 'completed'
   approval_required: true
   risk: 'normal' | 'high'
   risk_reasons: string[]
@@ -40,6 +41,7 @@ export interface ApprovalOperation {
   pushed_at?: string
   pr_number?: number
   pr_url?: string
+  completed_at?: string
 }
 
 export interface RepositoryTask {

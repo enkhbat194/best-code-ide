@@ -137,6 +137,38 @@ export const readOnlyMcpTools = [
     outputSchema,
     annotations: readOnlyAnnotations,
   },
+
+  {
+    name: 'repository_list_branches',
+    title: 'List repository branches',
+    description: 'List bounded branch metadata for an allowed project, including SHA, protection, and default-branch state.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string' },
+        limit: { type: 'integer', minimum: 1, maximum: 100, default: 100 },
+      },
+      required: ['project_id'],
+    },
+    outputSchema,
+    annotations: readOnlyAnnotations,
+  },
+  {
+    name: 'repository_compare_branch',
+    title: 'Compare repository branch',
+    description: 'Compare one branch against a base branch and return ahead/behind status, commits, and changed-file statistics.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string' },
+        branch: { type: 'string' },
+        base_branch: { type: 'string', description: 'Defaults to the project default branch.' },
+      },
+      required: ['project_id', 'branch'],
+    },
+    outputSchema,
+    annotations: readOnlyAnnotations,
+  },
   {
     name: 'repository_get_branch',
     title: 'Get repository branch',
@@ -439,6 +471,49 @@ export async function executeReadOnlyMcpTool(
               fragments: item.fragments.map((fragment) => fragment.slice(0, 2_000)),
             })),
             count: results.length,
+          },
+        })
+      }
+
+
+      case 'repository_list_branches': {
+        const limit = boundedInteger(args.limit, 100, 1, 100)
+        const items = await gh.listBranches(token, project.owner, project.repo, limit)
+        return finish({
+          ok: true,
+          operation_id: operationId,
+          status: 'completed',
+          ...projectFields,
+          result: {
+            items: items.map((item) => ({
+              name: item.name,
+              sha: item.sha,
+              protected: item.protected,
+              default: item.name === project!.defaultBranch,
+            })),
+            count: items.length,
+            limit,
+          },
+        })
+      }
+
+      case 'repository_compare_branch': {
+        const head = requireString(args, 'branch')
+        const base = typeof args.base_branch === 'string' && args.base_branch.trim()
+          ? args.base_branch.trim()
+          : project.defaultBranch
+        const comparison = await gh.compareBranchDetails(token, project.owner, project.repo, base, head)
+        return finish({
+          ok: true,
+          operation_id: operationId,
+          status: 'completed',
+          ...projectFields,
+          branch: head,
+          result: {
+            base_branch: base,
+            head_branch: head,
+            ...comparison,
+            fully_merged_into_base: comparison.ahead_by === 0,
           },
         })
       }

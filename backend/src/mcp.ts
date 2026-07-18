@@ -156,7 +156,7 @@ export async function handleMcp(req: Request, env: Env): Promise<Response> {
         serverInfo: {
           name: 'bestcode-repository-controller',
           title: 'BestCode Repository Controller',
-          version: '0.7.0',
+          version: '0.8.0',
           description: 'Project-scoped repository controller with approval-gated Git delivery, CI tasks, and production deployment.',
         },
         instructions:

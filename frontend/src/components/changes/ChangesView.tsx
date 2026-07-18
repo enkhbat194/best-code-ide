@@ -123,7 +123,7 @@ export function ChangesView() {
                   onClick={() => execute(async () => {
                     await decideApproval(operation.operation_id, 'approved')
                     await refreshApprovals()
-                    setStatus(`Approved: ${operation.operation_id}. ChatGPT одоо commit бэлтгэж болно.`)
+                    setStatus(`Approved: ${operation.operation_id}. ChatGPT approval-тай дараагийн үйлдлийг үргэлжлүүлж болно.`)
                   })}
                 >
                   <ShieldCheck size={14} /> Approve

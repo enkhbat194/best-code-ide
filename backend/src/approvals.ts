@@ -29,6 +29,7 @@ function publicOperation(operation: ApprovalOperation) {
     decision_actor: operation.decision_actor,
     commit_sha: operation.prepared_commit_sha,
     commit_url: operation.prepared_commit_url,
+    completed_at: operation.completed_at,
   }
 }
 
