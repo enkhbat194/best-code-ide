@@ -9,12 +9,16 @@ interface ChatState {
   isSending: boolean
   error: string | null
   send: (text: string) => Promise<void>
+  stop: () => void
   clear: () => void
 }
 
 function newId(): string {
   return Math.random().toString(36).slice(2) + Date.now().toString(36)
 }
+
+// Kept outside the store: an AbortController is not serializable state.
+let activeController: AbortController | null = null
 
 export const useChatStore = create<ChatState>()(
   persist(
@@ -24,6 +28,10 @@ export const useChatStore = create<ChatState>()(
       error: null,
 
       clear: () => set({ messages: [], error: null }),
+
+      stop: () => {
+        activeController?.abort()
+      },
 
       send: async (text: string) => {
         const trimmed = text.trim()
@@ -54,13 +62,13 @@ export const useChatStore = create<ChatState>()(
           })
         }
 
+        const controller = new AbortController()
+        activeController = controller
+
         try {
           await runLocalAgent(history, (event) => {
-            if (event.type === 'text') {
-              patchAssistant((message) => ({
-                ...message,
-                content: message.content ? `${message.content}\n\n${event.text}` : event.text,
-              }))
+            if (event.type === 'text_delta') {
+              patchAssistant((message) => ({ ...message, content: message.content + event.delta }))
             } else if (event.type === 'tool_call') {
               patchAssistant((message) => {
                 const toolCalls: ToolCall[] = message.toolCalls ? [...message.toolCalls] : []
@@ -83,10 +91,18 @@ export const useChatStore = create<ChatState>()(
             } else if (event.type === 'error') {
               set({ error: event.message })
             }
-          })
+          }, controller.signal)
         } catch (err) {
-          set({ error: err instanceof Error ? err.message : String(err) })
+          if (controller.signal.aborted || (err instanceof DOMException && err.name === 'AbortError')) {
+            patchAssistant((message) => ({
+              ...message,
+              content: message.content ? `${message.content}\n\n_(зогсоолоо)_` : '_(зогсоолоо)_',
+            }))
+          } else {
+            set({ error: err instanceof Error ? err.message : String(err) })
+          }
         } finally {
+          if (activeController === controller) activeController = null
           set({ isSending: false })
         }
       },

@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowUp, Bot, GitBranch } from 'lucide-react'
+import { ArrowUp, Bot, GitBranch, Square } from 'lucide-react'
 import { useChatStore } from '../../store/chatStore'
 import { useSettingsStore } from '../../store/settingsStore'
 import { ToolCallCard } from './ToolCallCard'
 import styles from './ChatView.module.css'
 
 export function ChatView() {
-  const { messages, isSending, error, send } = useChatStore()
+  const { messages, isSending, error, send, stop } = useChatStore()
   const configured = useSettingsStore((state) => state.isConfigured())
   const owner = useSettingsStore((state) => state.owner)
   const repo = useSettingsStore((state) => state.repo)
@@ -82,9 +82,15 @@ export function ChatView() {
             }
           }}
         />
-        <button className={styles.sendBtn} onClick={submit} disabled={isSending || !text.trim()} aria-label="Send">
-          <ArrowUp size={18} />
-        </button>
+        {isSending ? (
+          <button className={styles.sendBtn} onClick={stop} aria-label="Stop">
+            <Square size={16} />
+          </button>
+        ) : (
+          <button className={styles.sendBtn} onClick={submit} disabled={!text.trim()} aria-label="Send">
+            <ArrowUp size={18} />
+          </button>
+        )}
       </div>
     </div>
   )

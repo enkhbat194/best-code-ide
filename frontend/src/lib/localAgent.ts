@@ -8,7 +8,7 @@ const MAX_ITERATIONS = 12
 const MAX_RESULT_CHARS = 20_000
 
 export type AgentEvent =
-  | { type: 'text'; text: string }
+  | { type: 'text_delta'; delta: string }
   | { type: 'tool_call'; id: string; name: string; args: Record<string, unknown> }
   | { type: 'tool_result'; id: string; result: string; error?: boolean }
   | { type: 'error'; message: string }
@@ -187,6 +187,7 @@ function systemPrompt(): string {
 export async function runLocalAgent(
   history: { role: 'user' | 'assistant'; content: string }[],
   onEvent: (event: AgentEvent) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const { backendUrl, authToken } = useSettingsStore.getState()
   if (!backendUrl || !authToken) {
@@ -197,22 +198,20 @@ export async function runLocalAgent(
   const messages: LoopMessage[] = [{ role: 'system', content: systemPrompt() }, ...history]
 
   for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
+    if (signal?.aborted) return
     const res = await fetch(`${backendUrl}/api/llm`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authToken}` },
-      body: JSON.stringify({ messages, tools: TOOL_SCHEMAS }),
+      body: JSON.stringify({ messages, tools: TOOL_SCHEMAS, stream: true }),
+      signal,
     })
-    if (!res.ok) {
+    if (!res.ok || !res.body) {
       const text = await res.text().catch(() => res.statusText)
       throw new Error(`Backend error ${res.status}: ${text}`)
     }
-    const data = (await res.json()) as { message: AssistantMessage | null }
-    const assistant = data.message
-    if (!assistant) throw new Error('Model returned an empty message')
 
-    if (typeof assistant.content === 'string' && assistant.content) {
-      onEvent({ type: 'text', text: assistant.content })
-    }
+    const assistant = await readAssistantStream(res.body, (delta) => onEvent({ type: 'text_delta', delta }))
+    if (signal?.aborted) return
     messages.push(assistant)
 
     const toolCalls = assistant.tool_calls ?? []
@@ -246,4 +245,74 @@ export async function runLocalAgent(
   }
 
   onEvent({ type: 'error', message: `Агент ${MAX_ITERATIONS} алхамд багтаж дуусаагүй тул зогслоо.` })
+}
+
+interface StreamToolAcc {
+  id: string
+  name: string
+  arguments: string
+}
+
+/**
+ * Reads a DeepSeek SSE stream, emitting content deltas live via onDelta while
+ * assembling the final assistant message (content + any tool calls).
+ */
+async function readAssistantStream(
+  body: ReadableStream<Uint8Array>,
+  onDelta: (delta: string) => void,
+): Promise<AssistantMessage> {
+  const reader = body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let content = ''
+  const toolAcc: StreamToolAcc[] = []
+
+  const handleLine = (line: string) => {
+    const trimmed = line.trim()
+    if (!trimmed.startsWith('data:')) return
+    const payload = trimmed.slice(5).trim()
+    if (!payload || payload === '[DONE]') return
+    let json: {
+      choices?: { delta?: { content?: string; tool_calls?: { index: number; id?: string; function?: { name?: string; arguments?: string } }[] } }[]
+    }
+    try {
+      json = JSON.parse(payload)
+    } catch {
+      return
+    }
+    const delta = json.choices?.[0]?.delta
+    if (!delta) return
+    if (typeof delta.content === 'string' && delta.content) {
+      content += delta.content
+      onDelta(delta.content)
+    }
+    for (const call of delta.tool_calls ?? []) {
+      const slot = (toolAcc[call.index] ??= { id: '', name: '', arguments: '' })
+      if (call.id) slot.id = call.id
+      if (call.function?.name) slot.name = call.function.name
+      if (call.function?.arguments) slot.arguments += call.function.arguments
+    }
+  }
+
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    let newlineIndex: number
+    while ((newlineIndex = buffer.indexOf('\n')) !== -1) {
+      handleLine(buffer.slice(0, newlineIndex))
+      buffer = buffer.slice(newlineIndex + 1)
+    }
+  }
+  if (buffer) handleLine(buffer)
+
+  const message: AssistantMessage = { role: 'assistant', content: content || null }
+  const realCalls = toolAcc.filter(Boolean)
+  if (realCalls.length > 0) {
+    message.tool_calls = realCalls.map((call, index) => ({
+      id: call.id || `call_${index}`,
+      function: { name: call.name, arguments: call.arguments },
+    }))
+  }
+  return message
 }

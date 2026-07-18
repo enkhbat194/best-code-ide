@@ -1,15 +1,17 @@
-import { jsonError, jsonResponse, resolveSecret } from './utils'
+import { CORS_HEADERS, jsonError, jsonResponse, resolveSecret } from './utils'
 import type { Env } from './types'
 
 interface LlmRequestBody {
   messages: unknown[]
   tools?: unknown[]
+  stream?: boolean
 }
 
 /**
  * Thin authenticated proxy for one DeepSeek chat-completions call. The agent
  * loop for the local-first workspace runs in the browser; only the model call
- * comes through here so the API key never leaves the Worker.
+ * comes through here so the API key never leaves the Worker. Supports both a
+ * buffered JSON response and a streamed (SSE) response for live typing.
  */
 export async function handleLlm(req: Request, env: Env): Promise<Response> {
   const key = resolveSecret(env, 'DEEPSEEK_API_KEY')
@@ -27,6 +29,7 @@ export async function handleLlm(req: Request, env: Env): Promise<Response> {
   if (body.messages.length > 200) return jsonError('Too many messages')
   if (body.tools !== undefined && !Array.isArray(body.tools)) return jsonError('tools must be an array')
 
+  const wantStream = body.stream === true
   const res = await fetch('https://api.deepseek.com/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
@@ -34,9 +37,20 @@ export async function handleLlm(req: Request, env: Env): Promise<Response> {
       model: 'deepseek-chat',
       messages: body.messages,
       ...(body.tools && body.tools.length > 0 ? { tools: body.tools, tool_choice: 'auto' } : {}),
-      stream: false,
+      stream: wantStream,
     }),
   })
+
+  if (wantStream) {
+    if (!res.ok || !res.body) {
+      const text = await res.text().catch(() => res.statusText)
+      return jsonError(`DeepSeek error ${res.status}: ${text}`, 502)
+    }
+    // Pass the SSE stream straight through to the browser agent loop.
+    return new Response(res.body, {
+      headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', ...CORS_HEADERS },
+    })
+  }
 
   const text = await res.text()
   if (!res.ok) return jsonError(`DeepSeek error ${res.status}: ${text}`, 502)
