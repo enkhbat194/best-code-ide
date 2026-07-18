@@ -5,6 +5,44 @@ interface ToolResponse {
   branch?: string
 }
 
+interface ActionError {
+  code: string
+  message: string
+  retryable: boolean
+  action_required: string
+}
+
+interface ActionEnvelope<T> {
+  ok: boolean
+  operation_id: string
+  status: string
+  project_id?: string
+  branch?: string
+  approval_required?: boolean
+  result?: T
+  error?: ActionError
+}
+
+interface ProjectListItem {
+  id: string
+  repository: string
+}
+
+export interface RepositoryBranch {
+  name: string
+  sha: string
+  protected: boolean
+  default: boolean
+}
+
+export interface BranchDeletionResult {
+  branch: string
+  sha?: string
+  deleted_sha?: string
+  completed_at?: string | null
+  next_action?: string
+}
+
 export interface ApprovalChange {
   action: 'create' | 'update' | 'delete'
   path: string
@@ -96,6 +134,27 @@ async function request(path: string, init?: RequestInit): Promise<ToolResponse> 
   return rawRequest<ToolResponse>(path, init)
 }
 
+async function actionRequest<T>(name: string, body: Record<string, unknown>): Promise<ActionEnvelope<T>> {
+  const payload = await rawRequest<ActionEnvelope<T>>(`/api/actions/${encodeURIComponent(name)}`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+  if (!payload.ok || !payload.result) {
+    const error = payload.error
+    throw new Error(error ? `${error.code}: ${error.message} ${error.action_required}` : `${name} failed`)
+  }
+  return payload
+}
+
+async function configuredProjectId(): Promise<string> {
+  const { owner, repo } = settings()
+  const expected = `${owner}/${repo}`.toLowerCase()
+  const payload = await actionRequest<{ items: ProjectListItem[] }>('projects_list', { limit: 50 })
+  const project = payload.result?.items.find((item) => item.repository.toLowerCase() === expected)
+  if (!project) throw new Error(`BestCode project registry-д ${owner}/${repo} олдсонгүй`)
+  return project.id
+}
+
 function repoPrefix(): string {
   const { owner, repo } = settings()
   return `/api/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`
@@ -104,6 +163,37 @@ function repoPrefix(): string {
 export async function compareBranches(base: string, head: string): Promise<string> {
   const query = new URLSearchParams({ base, head, branch: head })
   return (await request(`${repoPrefix()}/compare?${query.toString()}`)).result
+}
+
+export async function listBranches(): Promise<RepositoryBranch[]> {
+  const projectId = await configuredProjectId()
+  const payload = await actionRequest<{ items: RepositoryBranch[] }>('repository_list_branches', {
+    project_id: projectId,
+    limit: 100,
+  })
+  return payload.result?.items ?? []
+}
+
+export async function requestBranchDeletion(branch: string): Promise<ActionEnvelope<BranchDeletionResult>> {
+  const projectId = await configuredProjectId()
+  return actionRequest<BranchDeletionResult>('repository_delete_branch', {
+    project_id: projectId,
+    branch,
+    title: `Delete repository branch ${branch}`,
+    summary: `Branch cleanup audit-аар ангилсан ${branch} branch-ийг SHA-pinned high-risk approval-аар устгах хүсэлт.`,
+  })
+}
+
+export async function completeBranchDeletion(
+  branch: string,
+  approvalOperationId: string,
+): Promise<ActionEnvelope<BranchDeletionResult>> {
+  const projectId = await configuredProjectId()
+  return actionRequest<BranchDeletionResult>('repository_delete_branch', {
+    project_id: projectId,
+    branch,
+    approval_operation_id: approvalOperationId,
+  })
 }
 
 export async function validationStatus(branch: string): Promise<string> {
@@ -145,7 +235,9 @@ export async function listApprovals(status = 'pending_approval'): Promise<Approv
   const { owner, repo } = settings()
   const query = new URLSearchParams({ status, limit: '50' })
   const payload = await rawRequest<{ items: ApprovalOperation[] }>(`/api/approvals?${query.toString()}`)
-  return payload.items.filter((item) => item.repository.owner === owner && item.repository.repo === repo)
+  return payload.items.filter(
+    (item) => item.repository.owner.toLowerCase() === owner.toLowerCase() && item.repository.repo.toLowerCase() === repo.toLowerCase(),
+  )
 }
 
 export async function decideApproval(
@@ -165,7 +257,9 @@ export async function getApproval(operationId: string): Promise<ApprovalOperatio
 export async function listRepositoryTasks(): Promise<RepositoryTask[]> {
   const { owner, repo } = settings()
   const payload = await rawRequest<{ items: RepositoryTask[] }>('/api/tasks?limit=50')
-  return payload.items.filter((item) => item.repository.owner === owner && item.repository.repo === repo)
+  return payload.items.filter(
+    (item) => item.repository.owner.toLowerCase() === owner.toLowerCase() && item.repository.repo.toLowerCase() === repo.toLowerCase(),
+  )
 }
 
 export async function startRepositoryTask(
