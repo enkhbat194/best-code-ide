@@ -3,10 +3,12 @@ import { deploymentMcpTools } from './mcpDeploymentTools'
 import { readOnlyMcpTools } from './mcpReadTools'
 import { safeWriteMcpTools } from './mcpWriteTools'
 import { buildActionDescription } from './openapiDescription'
+import { projectBrainMcpTools } from './projectBrainTools'
 
-const ACTION_TOOLS = [...readOnlyMcpTools, ...safeWriteMcpTools, ...deliveryMcpTools, ...deploymentMcpTools]
+const ACTION_TOOLS = [...readOnlyMcpTools, ...safeWriteMcpTools, ...deliveryMcpTools, ...deploymentMcpTools, ...projectBrainMcpTools]
 
 function tagFor(name: string): string {
+  if (name.startsWith('project_context_') || name.startsWith('project_memory_') || name.startsWith('project_task_') || name.startsWith('project_handoff_')) return 'Project Brain'
   if (name.startsWith('projects_') || name.startsWith('project_')) return 'Projects'
   if (name.startsWith('build_') || name.startsWith('test_') || name.startsWith('task_')) return 'Build and test'
   if (name.startsWith('deployment_')) return 'Deployment'
@@ -35,6 +37,9 @@ function safetyNote(tool: (typeof ACTION_TOOLS)[number]): string {
   }
   if (tool.name === 'deployment_start') {
     return 'The first call creates a separate high-risk approval and does not deploy. A second call with the approved operation ID may dispatch only the configured workflow from the project default branch.'
+  }
+  if (tool.name === 'project_task_start' || tool.name === 'project_task_update' || tool.name === 'project_handoff_record') {
+    return 'This action changes coordination metadata only. It cannot modify repository code or override GitHub, CI, deployment, or the locked Master plan.'
   }
   return 'This action follows BestCode project allowlists, protected-branch rules, approval requirements, and durable task state.'
 }
@@ -113,12 +118,13 @@ export function openapiSpec(origin: string): object {
       title: 'BestCode Repository Controller',
       description:
         'Project-scoped GitHub and IDE controller for ChatGPT Actions. Use projects_list first, work only on agent/<task> branches, stage code changes for user approval, commit, push, build, test, open a draft pull request, then request a separate production deployment approval.',
-      version: '0.8.0',
+      version: '0.9.0',
     },
     servers: [{ url: origin }],
     security: [{ bearerAuth: [] }],
     tags: [
       { name: 'Projects', description: 'Allowed project registry.' },
+      { name: 'Project Brain', description: 'Canonical context, memory search, durable cross-agent tasks, and handoffs.' },
       { name: 'Repository', description: 'Repository inspection, staged changes, Git delivery, and pull requests.' },
       { name: 'Approvals', description: 'Read approval state. Approval decisions remain user-only in the BestCode UI.' },
       { name: 'Build and test', description: 'GitHub Actions task start, status, logs, and cancellation.' },

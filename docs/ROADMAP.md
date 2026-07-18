@@ -1,55 +1,69 @@
-# Best Code IDE Roadmap
+# BestCode Roadmap
 
-## v0.2 — Agent core (current)
+Canonical plan: `/BESTCODE_MASTER.md` v1.0.0 (`LOCKED`)
 
-- Repository tree and code search
-- Multi-file read
-- Branch creation and diff
-- GitHub Actions validation
-- ChatGPT Actions and MCP tool parity
-- GitHub to mobile local workspace import
-- Agent identity and chat history fixes
+Энэ файл нь Master-ийн phase дарааллыг дэлгэрүүлнэ. Зорилго, AI-ийн үүрэг, source-of-truth болон hard rule зөрвөл Master түрүүлж хүчинтэй.
 
-## v0.3 — Safe multi-file changes
+## Phase 0 — Core controller — COMPLETED
 
-- Workspace change set instead of one commit per file
-- Unified patch application
-- Changes tab with accept/reject per file
-- One atomic commit for selected files
-- Create Pull Request tool
-- Revert and recovery flow
+- Cloudflare Worker ба mobile PWA
+- ChatGPT Actions/OpenAPI ба Claude-compatible Remote MCP
+- Project allowlist, repository read/search
+- Approval-gated staged write, commit/push/PR
+- GitHub Actions build/test/deployment tools
 
-## v0.4 — Validation feedback loop
+## Phase 1 — Repository stabilization — COMPLETED
 
-- Read workflow jobs and failed logs
-- Agent automatically diagnoses failed build/test
-- Bounded repair loop
-- Validation status and logs UI
-- Merge only after successful checks
+- OpenAPI description regression protection
+- Branch list/compare/delete tools
+- SHA-pinned high-risk deletion approval
+- Superseded PR/branch cleanup ба final verification
 
-## v0.5 — Remote execution and full preview
+## Phase 2 — Project Brain v1 — CURRENT
+
+- Locked Master, current Status, Architecture, Roadmap, decision history
+- Canonical project context aggregation ба deterministic memory search
+- Durable project task lifecycle ба cross-agent handoff
+- ChatGPT Actions/MCP tool parity
+- Provenance, project isolation, source-of-truth policy
+- Unit/integration tests, CI, PR, merge, production verification
+
+## Phase 3 — Production PWA update system
+
+- Build/version metadata, update detection, release note
+- Service worker activation, cache migration, stale-tab protection
+- Offline recovery, rollback, iPhone standalone verification
+
+## Phase 4 — Professional workspace v1
+
+- Real file tree, multi-tab editor, breadcrumb, search
+- Create/rename/move/delete, Git status, unsaved/conflict UI
+- Coherent multi-file change set ба нэг ойлгомжтой approval
+- Mobile ба desktop usability
+
+## Phase 5 — Preview and diagnostics loop
+
+- HTML/JS/TS/React/Python бодит smoke tests
+- Preview console/runtime/network error capture
+- Diagnostics snapshot-ийг DeepSeek, ChatGPT, Claude-д өгөх
+- Bounded AI diagnosis/repair loop ба Preview sandbox security
+
+## Phase 6 — Remote runner and terminal
 
 - Ephemeral sandbox per workspace
-- npm/pnpm/yarn install
-- Build, lint, test, and arbitrary approved commands
-- React/Vite/Next/Vue preview URL
-- Process and port management
+- npm/pnpm/yarn install, approved shell command
+- Process/port management ба streaming logs
+- Timeout, resource, network, command, secret isolation
 
-## v0.6 — Provider layer
+## Phase 7 — Security hardening
 
-- OpenAI API adapter
-- Anthropic API adapter
-- Gemini API adapter
-- DeepSeek/OpenRouter-compatible adapter
-- Model picker and per-task routing
-- Encrypted server-side provider credentials
+- Per-user/session auth, GitHub OAuth, MCP OAuth
+- Rate limiting, replay protection, idempotency
+- Durable audit timeline, approval expiry, secret redaction, strict CORS
 
-## v1.0 — Mobile AI IDE
+## Phase 8 — Release verification
 
-- Project/workspace manager
-- GitHub OAuth
-- MCP OAuth
-- Full local/remote/GitHub sync with conflicts
-- Branch, commit, push, Pull Request, review, merge
-- Build/test/preview agent loop
-- Audit log and permission policies
+- ChatGPT Actions, Claude MCP, DeepSeek end-to-end smoke tests
+- Full approval → PR → CI → merge → deploy → rollback flow
+- iPhone Safari болон installed PWA verification
+- Stable version tag, release notes, operational runbook

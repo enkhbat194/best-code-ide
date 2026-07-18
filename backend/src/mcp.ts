@@ -2,17 +2,19 @@ import { deliveryMcpTools, executeDeliveryMcpTool } from './mcpDeliveryTools'
 import { deploymentMcpTools, executeDeploymentMcpTool } from './mcpDeploymentTools'
 import { executeReadOnlyMcpTool, readOnlyMcpTools } from './mcpReadTools'
 import { executeSafeWriteMcpTool, safeWriteMcpTools } from './mcpWriteTools'
+import { executeProjectBrainMcpTool, projectBrainMcpTools } from './projectBrainTools'
 import { resolveSecret } from './utils'
 import type { Env } from './types'
 
 const LATEST_PROTOCOL_VERSION = '2025-11-25'
 const SUPPORTED_PROTOCOL_VERSIONS = new Set(['2025-11-25', '2025-06-18', '2025-03-26'])
 const DEFAULT_BROWSER_ORIGINS = ['https://chatgpt.com', 'https://chat.openai.com']
-const ALL_MCP_TOOLS = [...readOnlyMcpTools, ...safeWriteMcpTools, ...deliveryMcpTools, ...deploymentMcpTools]
+const ALL_MCP_TOOLS = [...readOnlyMcpTools, ...safeWriteMcpTools, ...deliveryMcpTools, ...deploymentMcpTools, ...projectBrainMcpTools]
 const READ_ONLY_NAMES = new Set<string>(readOnlyMcpTools.map((tool) => tool.name))
 const SAFE_WRITE_NAMES = new Set<string>(safeWriteMcpTools.map((tool) => tool.name))
 const DELIVERY_NAMES = new Set<string>(deliveryMcpTools.map((tool) => tool.name))
 const DEPLOYMENT_NAMES = new Set<string>(deploymentMcpTools.map((tool) => tool.name))
+const PROJECT_BRAIN_NAMES = new Set<string>(projectBrainMcpTools.map((tool) => tool.name))
 
 interface JsonRpcMessage {
   jsonrpc: '2.0'
@@ -156,11 +158,11 @@ export async function handleMcp(req: Request, env: Env): Promise<Response> {
         serverInfo: {
           name: 'bestcode-repository-controller',
           title: 'BestCode Repository Controller',
-          version: '0.8.0',
-          description: 'Project-scoped repository controller with approval-gated Git delivery, CI tasks, and production deployment.',
+          version: '0.9.0',
+          description: 'Project-scoped repository controller with shared Project Brain, approval-gated Git delivery, CI tasks, and production deployment.',
         },
         instructions:
-          'Use projects_list first. Work on agent/<task>. Stage changes, wait for user approval, commit, push, run build/test, and create a draft PR. Production deployment requires a separate high-risk approval operation and only deploys the project default branch.',
+          'Use projects_list then project_context_get. Start or resume a shared project task, work on agent/<task>, stage one coherent change set, wait for user approval, commit, push, run build/test, and create a draft PR. Record a handoff before another AI continues. Production deployment requires a separate high-risk approval.',
       }, { 'MCP-Protocol-Version': protocolVersion })
     }
 
@@ -174,7 +176,7 @@ export async function handleMcp(req: Request, env: Env): Promise<Response> {
       const name = typeof message.params?.name === 'string' ? message.params.name : ''
       const args = message.params?.arguments
       if (!name) return rpcError(message.id, -32602, 'Missing tool name')
-      if (!READ_ONLY_NAMES.has(name) && !SAFE_WRITE_NAMES.has(name) && !DELIVERY_NAMES.has(name) && !DEPLOYMENT_NAMES.has(name)) {
+      if (!READ_ONLY_NAMES.has(name) && !SAFE_WRITE_NAMES.has(name) && !DELIVERY_NAMES.has(name) && !DEPLOYMENT_NAMES.has(name) && !PROJECT_BRAIN_NAMES.has(name)) {
         return rpcError(message.id, -32602, `Unknown MCP tool: ${name}`)
       }
       if (args !== undefined && (!args || typeof args !== 'object' || Array.isArray(args))) {
@@ -192,7 +194,9 @@ export async function handleMcp(req: Request, env: Env): Promise<Response> {
           ? await executeSafeWriteMcpTool(name, toolArgs, githubToken, env)
           : DELIVERY_NAMES.has(name)
             ? await executeDeliveryMcpTool(name, toolArgs, githubToken, env)
-            : await executeDeploymentMcpTool(name, toolArgs, githubToken, env)
+            : DEPLOYMENT_NAMES.has(name)
+              ? await executeDeploymentMcpTool(name, toolArgs, githubToken, env)
+              : await executeProjectBrainMcpTool(name, toolArgs, githubToken, env)
 
       console.log(JSON.stringify({
         event: 'mcp_tool_call',

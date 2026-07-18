@@ -7,6 +7,7 @@ import { readOnlyMcpTools } from './mcpReadTools.ts'
 import { safeWriteMcpTools } from './mcpWriteTools.ts'
 import { openapiSpec } from './openapi.ts'
 import { ACTION_DESCRIPTION_LIMIT, buildActionDescription } from './openapiDescription.ts'
+import { projectBrainMcpTools } from './projectBrainTools.ts'
 
 function generatedOperations() {
   const spec = openapiSpec('https://bestcode.test')
@@ -40,6 +41,7 @@ test('every generated OpenAPI action uses a bounded description', () => {
     ...safeWriteMcpTools,
     ...deliveryMcpTools,
     ...deploymentMcpTools,
+    ...projectBrainMcpTools,
   ].map((tool) => tool.name)
   const operations = generatedOperations()
 

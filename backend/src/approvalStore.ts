@@ -13,6 +13,18 @@ export type ChangeAction = 'create' | 'update' | 'delete'
 export type RiskLevel = 'normal' | 'high'
 export type TaskKind = 'build' | 'test' | 'deployment'
 export type TaskStatus = 'queued' | 'in_progress' | 'completed' | 'failed' | 'cancelled'
+export type ProjectTaskStatus =
+  | 'planned'
+  | 'inspecting'
+  | 'editing'
+  | 'awaiting_approval'
+  | 'validating'
+  | 'pull_request'
+  | 'merged'
+  | 'deployed'
+  | 'completed'
+  | 'blocked'
+  | 'cancelled'
 
 export interface StagedChange {
   action: ChangeAction
@@ -68,6 +80,33 @@ export interface TaskRecord {
   error?: string
 }
 
+export interface ProjectTaskRecord {
+  task_id: string
+  project_id: string
+  goal: string
+  status: ProjectTaskStatus
+  created_by: string
+  branch?: string
+  summary?: string
+  next_action?: string
+  evidence: string[]
+  created_at: string
+  updated_at: string
+  completed_at?: string
+}
+
+export interface ProjectHandoffRecord {
+  handoff_id: string
+  project_id: string
+  task_id: string
+  from_agent: string
+  to_agent?: string
+  summary: string
+  next_actions: string[]
+  evidence: string[]
+  created_at: string
+}
+
 interface DecisionRequest {
   decision: 'approved' | 'rejected'
   actor?: string
@@ -88,12 +127,70 @@ function taskKey(id: string): string {
   return `task:${id}`
 }
 
+function projectTaskKey(id: string): string {
+  return `project-task:${id}`
+}
+
+function handoffKey(id: string): string {
+  return `handoff:${id}`
+}
+
 function validId(value: string): boolean {
   return /^[a-f0-9-]{16,64}$/i.test(value)
 }
 
 function isExpired(operation: ApprovalOperation): boolean {
   return operation.status === 'pending_approval' && Date.parse(operation.expires_at) <= Date.now()
+}
+
+const PROJECT_TASK_STATUSES = new Set<ProjectTaskStatus>([
+  'planned',
+  'inspecting',
+  'editing',
+  'awaiting_approval',
+  'validating',
+  'pull_request',
+  'merged',
+  'deployed',
+  'completed',
+  'blocked',
+  'cancelled',
+])
+
+const PROJECT_TASK_TRANSITIONS: Record<ProjectTaskStatus, ProjectTaskStatus[]> = {
+  planned: ['inspecting', 'blocked', 'cancelled'],
+  inspecting: ['editing', 'blocked', 'cancelled'],
+  editing: ['awaiting_approval', 'validating', 'blocked', 'cancelled'],
+  awaiting_approval: ['editing', 'validating', 'blocked', 'cancelled'],
+  validating: ['editing', 'pull_request', 'blocked', 'cancelled'],
+  pull_request: ['merged', 'blocked', 'cancelled'],
+  merged: ['deployed', 'completed', 'blocked'],
+  deployed: ['completed', 'blocked'],
+  blocked: ['inspecting', 'editing', 'awaiting_approval', 'validating', 'cancelled'],
+  completed: [],
+  cancelled: [],
+}
+
+export function isProjectTaskTransitionAllowed(from: ProjectTaskStatus, to: ProjectTaskStatus): boolean {
+  return from === to || PROJECT_TASK_TRANSITIONS[from].includes(to)
+}
+
+function cleanString(value: unknown, max: number): string | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined
+  return value.trim().slice(0, max)
+}
+
+function cleanStringList(value: unknown, maxItems = 20, maxChars = 500): string[] {
+  if (!Array.isArray(value)) return []
+  return [...new Set(value
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim().slice(0, maxChars))
+    .filter(Boolean))]
+    .slice(0, maxItems)
+}
+
+function validProjectTaskStatus(value: unknown): value is ProjectTaskStatus {
+  return typeof value === 'string' && PROJECT_TASK_STATUSES.has(value as ProjectTaskStatus)
 }
 
 export class ApprovalStore {
@@ -113,6 +210,114 @@ export class ApprovalStore {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url)
     const segments = url.pathname.split('/').filter(Boolean)
+
+    if (request.method === 'POST' && url.pathname === '/project-tasks') {
+      const task = (await request.json().catch(() => null)) as ProjectTaskRecord | null
+      if (!task || !validId(task.task_id)) return json({ error: 'A valid task_id is required' }, 400)
+      const projectId = cleanString(task.project_id, 64)
+      const goal = cleanString(task.goal, 2000)
+      const createdBy = cleanString(task.created_by, 80)
+      if (!projectId || !goal || !createdBy) return json({ error: 'project_id, goal, and created_by are required' }, 400)
+      if (task.status !== 'planned') return json({ error: 'A new project task must start in planned status' }, 409)
+      if (await this.state.storage.get(projectTaskKey(task.task_id))) return json({ error: 'Project task already exists' }, 409)
+      const normalized: ProjectTaskRecord = {
+        ...task,
+        project_id: projectId,
+        goal,
+        created_by: createdBy,
+        status: 'planned',
+        branch: cleanString(task.branch, 160),
+        summary: cleanString(task.summary, 4000),
+        next_action: cleanString(task.next_action, 1000),
+        evidence: cleanStringList(task.evidence),
+      }
+      await this.state.storage.put(projectTaskKey(task.task_id), normalized)
+      return json(normalized, 201)
+    }
+
+    if (request.method === 'GET' && url.pathname === '/project-tasks') {
+      const limit = Math.min(Math.max(Number(url.searchParams.get('limit') ?? '30'), 1), 100)
+      const projectId = url.searchParams.get('project_id')
+      const status = url.searchParams.get('status')
+      const values = await this.state.storage.list<ProjectTaskRecord>({ prefix: 'project-task:' })
+      const tasks = [...values.values()]
+        .filter((task) => (!projectId || task.project_id === projectId) && (!status || task.status === status))
+        .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))
+      return json({ items: tasks.slice(0, limit), count: Math.min(tasks.length, limit), total: tasks.length })
+    }
+
+    if (segments[0] === 'project-tasks' && segments[1]) {
+      const taskId = segments[1]
+      if (!validId(taskId)) return json({ error: 'Invalid project task id' }, 400)
+      const task = await this.state.storage.get<ProjectTaskRecord>(projectTaskKey(taskId))
+      if (!task) return json({ error: 'Project task not found' }, 404)
+      if (request.method === 'GET' && segments.length === 2) return json(task)
+      if (request.method === 'POST' && segments[2] === 'update') {
+        const body = (await request.json().catch(() => null)) as Partial<ProjectTaskRecord> | null
+        if (!body) return json({ error: 'Project task update body is required' }, 400)
+        const nextStatus = body.status ?? task.status
+        if (!validProjectTaskStatus(nextStatus)) return json({ error: 'Invalid project task status' }, 400)
+        if (!isProjectTaskTransitionAllowed(task.status, nextStatus)) {
+          return json({ error: `Project task cannot move from ${task.status} to ${nextStatus}` }, 409)
+        }
+        const evidence = body.evidence === undefined ? task.evidence : cleanStringList(body.evidence)
+        const summary = body.summary === undefined ? task.summary : cleanString(body.summary, 4000)
+        if (nextStatus === 'completed' && (!summary || evidence.length === 0)) {
+          return json({ error: 'Completed project tasks require a summary and at least one evidence reference' }, 409)
+        }
+        const now = new Date().toISOString()
+        const updated: ProjectTaskRecord = {
+          ...task,
+          status: nextStatus,
+          branch: body.branch === undefined ? task.branch : cleanString(body.branch, 160),
+          summary,
+          next_action: body.next_action === undefined ? task.next_action : cleanString(body.next_action, 1000),
+          evidence,
+          updated_at: now,
+          ...(nextStatus === 'completed' ? { completed_at: task.completed_at ?? now } : {}),
+        }
+        await this.state.storage.put(projectTaskKey(taskId), updated)
+        return json(updated)
+      }
+    }
+
+    if (request.method === 'POST' && url.pathname === '/handoffs') {
+      const handoff = (await request.json().catch(() => null)) as ProjectHandoffRecord | null
+      if (!handoff || !validId(handoff.handoff_id) || !validId(handoff.task_id)) {
+        return json({ error: 'Valid handoff_id and task_id are required' }, 400)
+      }
+      const task = await this.state.storage.get<ProjectTaskRecord>(projectTaskKey(handoff.task_id))
+      if (!task) return json({ error: 'Project task not found' }, 404)
+      const projectId = cleanString(handoff.project_id, 64)
+      const fromAgent = cleanString(handoff.from_agent, 80)
+      const summary = cleanString(handoff.summary, 4000)
+      if (!projectId || projectId !== task.project_id || !fromAgent || !summary) {
+        return json({ error: 'Handoff must match the task project and include from_agent and summary' }, 409)
+      }
+      if (await this.state.storage.get(handoffKey(handoff.handoff_id))) return json({ error: 'Handoff already exists' }, 409)
+      const normalized: ProjectHandoffRecord = {
+        ...handoff,
+        project_id: projectId,
+        from_agent: fromAgent,
+        to_agent: cleanString(handoff.to_agent, 80),
+        summary,
+        next_actions: cleanStringList(handoff.next_actions, 20, 1000),
+        evidence: cleanStringList(handoff.evidence),
+      }
+      await this.state.storage.put(handoffKey(handoff.handoff_id), normalized)
+      return json(normalized, 201)
+    }
+
+    if (request.method === 'GET' && url.pathname === '/handoffs') {
+      const limit = Math.min(Math.max(Number(url.searchParams.get('limit') ?? '20'), 1), 100)
+      const projectId = url.searchParams.get('project_id')
+      const taskId = url.searchParams.get('task_id')
+      const values = await this.state.storage.list<ProjectHandoffRecord>({ prefix: 'handoff:' })
+      const handoffs = [...values.values()]
+        .filter((item) => (!projectId || item.project_id === projectId) && (!taskId || item.task_id === taskId))
+        .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
+      return json({ items: handoffs.slice(0, limit), count: Math.min(handoffs.length, limit), total: handoffs.length })
+    }
 
     if (request.method === 'POST' && url.pathname === '/operations') {
       const operation = (await request.json().catch(() => null)) as ApprovalOperation | null

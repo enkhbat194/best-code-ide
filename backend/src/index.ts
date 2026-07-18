@@ -55,7 +55,7 @@ export default {
     const url = new URL(req.url)
 
     if (url.pathname === '/health') {
-      return jsonResponse({ ok: true, build: 'branch-management-v1' })
+      return jsonResponse({ ok: true, build: 'project-brain-v1' })
     }
 
     // Public schema discovery for ChatGPT Custom GPT Actions and REST clients.

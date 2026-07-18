@@ -5,14 +5,14 @@ compatibility_date = "2024-11-01"
 # Secrets and configuration (never put real values in this file):
 #   GITHUB_TOKEN              Fine-grained GitHub token scoped to approved repositories
 #   AUTH_TOKEN                Bearer token required by PWA, REST, and MCP requests
-#   PROJECTS_JSON             Project registry with optional buildWorkflow/testWorkflow/previewUrl
+#   PROJECTS_JSON             Project registry with optional workflows, previewUrl, and memoryPaths
 #   MCP_ALLOWED_ORIGINS       Optional comma-separated trusted browser origins
 #   DEEPSEEK_API_KEY          Optional legacy in-app agent key
 #   ENABLE_LEGACY_AGENT       Optional; set true only to restore /api/chat
 #   ENABLE_LEGACY_REST_WRITES Optional; set true only to restore direct legacy REST writes
 #
 # Example PROJECTS_JSON shape:
-# [{"id":"bestcode","name":"BestCode PWA","owner":"enkhbat194","repo":"best-code-ide","defaultBranch":"main","buildWorkflow":"validate.yml","testWorkflow":"test.yml"}]
+# [{"id":"bestcode","name":"BestCode PWA","owner":"enkhbat194","repo":"best-code-ide","defaultBranch":"main","buildWorkflow":"validate.yml","testWorkflow":"test.yml","memoryPaths":["BESTCODE_MASTER.md","docs/PROJECT_STATUS.md","docs/ARCHITECTURE.md","docs/ROADMAP.md","docs/DECISIONS/README.md","README.md"]}]
 
 [[durable_objects.bindings]]
 name = "APPROVALS"

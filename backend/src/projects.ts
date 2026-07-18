@@ -11,6 +11,7 @@ export interface ProjectConfig {
   testWorkflow?: string
   deployWorkflow?: string
   previewUrl?: string
+  memoryPaths?: string[]
 }
 
 const DEFAULT_PROJECTS: ProjectConfig[] = [
@@ -24,11 +25,28 @@ const DEFAULT_PROJECTS: ProjectConfig[] = [
     buildWorkflow: 'validate.yml',
     testWorkflow: 'test.yml',
     deployWorkflow: 'deploy.yml',
+    memoryPaths: [
+      'BESTCODE_MASTER.md',
+      'docs/PROJECT_STATUS.md',
+      'docs/ARCHITECTURE.md',
+      'docs/ROADMAP.md',
+      'docs/DECISIONS/README.md',
+      'docs/DECISIONS/0001-project-brain-and-ai-roles.md',
+      'README.md',
+    ],
   },
 ]
 
 function optionalString(project: Record<string, unknown>, key: string): boolean {
   return project[key] === undefined || typeof project[key] === 'string'
+}
+
+function optionalStringArray(project: Record<string, unknown>, key: string): boolean {
+  return project[key] === undefined || (
+    Array.isArray(project[key]) &&
+    (project[key] as unknown[]).length <= 20 &&
+    (project[key] as unknown[]).every((item) => typeof item === 'string' && item.trim().length > 0)
+  )
 }
 
 function isProject(value: unknown): value is ProjectConfig {
@@ -45,7 +63,8 @@ function isProject(value: unknown): value is ProjectConfig {
     optionalString(project, 'buildWorkflow') &&
     optionalString(project, 'testWorkflow') &&
     optionalString(project, 'deployWorkflow') &&
-    optionalString(project, 'previewUrl')
+    optionalString(project, 'previewUrl') &&
+    optionalStringArray(project, 'memoryPaths')
   )
 }
 

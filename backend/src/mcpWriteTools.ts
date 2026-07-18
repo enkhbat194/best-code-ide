@@ -243,6 +243,15 @@ function riskForPath(path: string, action: StagedChange['action']): { risk: Risk
   }
   if (/(^|\/)(migrations?|schema|database)(\/|\.|$)/i.test(path)) reasons.push('database_or_migration_path')
   if (/secret|credential|token|private[-_]?key/i.test(path)) reasons.push('sensitive_path_name')
+  if (
+    path === 'BESTCODE_MASTER.md' ||
+    path === 'docs/PROJECT_STATUS.md' ||
+    path === 'docs/ARCHITECTURE.md' ||
+    path === 'docs/ROADMAP.md' ||
+    path.startsWith('docs/DECISIONS/')
+  ) {
+    reasons.push('project_brain_source_of_truth_change')
+  }
   return { risk: reasons.length > 0 ? 'high' : 'normal', reasons }
 }
 

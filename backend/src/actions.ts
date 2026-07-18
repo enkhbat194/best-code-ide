@@ -2,6 +2,7 @@ import { deliveryMcpTools, executeDeliveryMcpTool } from './mcpDeliveryTools'
 import { deploymentMcpTools, executeDeploymentMcpTool } from './mcpDeploymentTools'
 import { executeReadOnlyMcpTool, readOnlyMcpTools } from './mcpReadTools'
 import { executeSafeWriteMcpTool, safeWriteMcpTools } from './mcpWriteTools'
+import { executeProjectBrainMcpTool, projectBrainMcpTools } from './projectBrainTools'
 import { jsonError, jsonResponse, resolveSecret } from './utils'
 import type { Env } from './types'
 
@@ -9,11 +10,13 @@ const READ_ONLY_NAMES = new Set<string>(readOnlyMcpTools.map((tool) => tool.name
 const SAFE_WRITE_NAMES = new Set<string>(safeWriteMcpTools.map((tool) => tool.name))
 const DELIVERY_NAMES = new Set<string>(deliveryMcpTools.map((tool) => tool.name))
 const DEPLOYMENT_NAMES = new Set<string>(deploymentMcpTools.map((tool) => tool.name))
+const PROJECT_BRAIN_NAMES = new Set<string>(projectBrainMcpTools.map((tool) => tool.name))
 const ACTION_NAMES = new Set<string>([
   ...READ_ONLY_NAMES,
   ...SAFE_WRITE_NAMES,
   ...DELIVERY_NAMES,
   ...DEPLOYMENT_NAMES,
+  ...PROJECT_BRAIN_NAMES,
 ])
 
 function validArguments(value: unknown): value is Record<string, unknown> {
@@ -48,7 +51,9 @@ export async function handleActions(req: Request, env: Env, url: URL): Promise<R
       ? await executeSafeWriteMcpTool(toolName, parsed, githubToken, env)
       : DELIVERY_NAMES.has(toolName)
         ? await executeDeliveryMcpTool(toolName, parsed, githubToken, env)
-        : await executeDeploymentMcpTool(toolName, parsed, githubToken, env)
+        : DEPLOYMENT_NAMES.has(toolName)
+          ? await executeDeploymentMcpTool(toolName, parsed, githubToken, env)
+          : await executeProjectBrainMcpTool(toolName, parsed, githubToken, env)
 
   console.log(JSON.stringify({
     event: 'openapi_action_call',
