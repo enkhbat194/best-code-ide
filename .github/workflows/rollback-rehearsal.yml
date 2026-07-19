@@ -37,7 +37,9 @@ on:
         type: string
 
 permissions:
+  actions: read
   contents: read
+  statuses: write
 
 concurrency:
   group: bestcode-rollback-${{ github.event.inputs.worker || github.ref }}
@@ -133,7 +135,7 @@ jobs:
 
   approved-rehearsal:
     name: Run owner-approved backend and PWA rehearsal
-    if: ${{ github.ref == 'refs/heads/agent/rollback-rehearsal-approved-20260719-1' }}
+    if: ${{ github.ref == 'refs/heads/agent/rollback-rehearsal-approved-20260719-1' && github.event.head_commit.message != 'Publish previous rollback rehearsal outcome' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: production
@@ -178,3 +180,18 @@ jobs:
           path: artifacts/rollback-rehearsal-*.json
           if-no-files-found: warn
           retention-days: 30
+
+  publish-rehearsal-status:
+    name: Publish previous rollback rehearsal outcome
+    if: ${{ github.ref == 'refs/heads/agent/rollback-rehearsal-approved-20260719-1' && github.event.head_commit.message == 'Publish previous rollback rehearsal outcome' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Publish exact previous rehearsal run as a commit status
+        env:
+          EXPECTED_REHEARSAL_SHA: 103f73efb0a1e88ec259db19425c02dd5a2b3a68
+        run: node scripts/github-workflow-status-bridge.mjs
