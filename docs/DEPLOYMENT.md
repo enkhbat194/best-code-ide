@@ -1,6 +1,6 @@
 # BestCode production deployment
 
-> **P0 integrity notice (2026-07-19):** Cloudflare Git integration showed a non-main PR branch version in deployment history before merge, but BestCode did not persist enough branch/SHA/traffic evidence to prove whether that version received production traffic. Cloudflare's documented default is preview upload for non-production branches. Until Phase 2.1 verifies the actual trigger configuration and active source, every release must confirm active branch/SHA instead of inferring it from version history.
+> **P0 integrity status (verified 2026-07-19):** The original non-main production exposure was found and repaired by provider-level evidence. A deliberate non-main probe subsequently stayed preview-only while production remained on exact `main`, and an owner-approved backend/PWA rollback→smoke→restore→smoke drill passed. Every release still confirms active branch/SHA dynamically; version history alone is never accepted as production truth.
 
 Master v2 rule `BC-R23`: non-main branch deployment must never receive production traffic. Required remediation and exit evidence are in `docs/ROADMAP.md` Phase 2.1A and `docs/EVIDENCE_STANDARD.md` Release evidence.
 
@@ -139,12 +139,26 @@ mutation хийхгүй `plan` үүсгэнэ. `scripts/cloudflare-rollback-cont
 
 Таарсан үед controller candidate version-д 100% traffic түр идэвхжүүлж smoke хийгээд,
 амжилттай эсэхээс үл хамааран `finally` хамгаалалтаар эхний current version-ийг 100%
-traffic-т буцааж, restore smoke хийнэ. `force` rollback ашиглахгүй; version ID нь
-Cloudflare-д хүчинтэй, binding-compatible saved version байх ёстой. Rehearsal evidence
+traffic-т буцааж, restore smoke хийнэ. Cloudflare-ийн documented `force=true` query-г
+зөвхөн дээрх exact previous-good saved version ID-г идэвхжүүлэхэд хэрэглэнэ; энэ нь
+secret/binding өөрчлөгдсөн үед older version deployment-ийг API блоклосныг owner-ийн
+exact approval-аар давуулах зориулалттай бөгөөд candidate selection эсвэл concurrent
+deployment guard-ийг сулруулахгүй. Rehearsal evidence
 нь rollback/restore deployment ID, active болсон version, smoke status-ийг хадгална,
 secret болон environment value хадгалахгүй. Restore хийхийн өмнө active version-ийг
 дахин уншина; энэ хооронд өөр deployment орсон бол түүнийг хуучин version-оор
 дарж бичихгүй, rehearsal-ийг concurrency incident гэж failure болгоно.
+
+First owner-approved production drill evidence:
+
+- run `29683440382`;
+- artifact `rollback-rehearsal-approved-29683440382-1`, ID `8441302013`;
+- digest `sha256:9139cd1b05a47dfedf674e383126a5cf45508395178f6535a2c2e1566981892f`;
+- backend болон PWA rollback/restore smoke бүр HTTP 200;
+- evidence records: `ok=true`, `restored=true`, error=null.
+
+Cloudflare Create Deployment API reference:
+<https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/deployments/methods/create/>.
 
 Verify these names in Cloudflare before the first production deployment. Deployment status is taken from the actual GitHub Actions run; missing secrets or Cloudflare failures are returned as real failures.
 

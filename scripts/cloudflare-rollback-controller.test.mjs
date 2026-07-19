@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  apiRequest,
+  createDeployment,
   rehearseRollback,
   selectRollbackCandidate,
   validateCurrentDeployment,
@@ -147,4 +149,48 @@ test('rollback rehearsal never overwrites an unexpected concurrent deployment', 
   assert.equal(result.restored, false)
   assert.match(result.restore_error, /changed concurrently/)
   assert.deepEqual(calls.filter((call) => call.startsWith('deploy:')), [`deploy:${candidateVersion}`])
+})
+
+test('deployment creation explicitly forces an exact previous version without custom trigger annotations', async () => {
+  let capturedUrl
+  let capturedRequest
+  const deploymentId = '88888888-8888-4888-8888-888888888888'
+  const result = await createDeployment(
+    { name: 'best-code-ide' },
+    candidateVersion,
+    'BestCode rollback rehearsal',
+    {
+      accountId: 'account-id',
+      cloudflareToken: 'test-token',
+      fetchImpl: async (url, request) => {
+        capturedUrl = url
+        capturedRequest = request
+        return new Response(JSON.stringify({ success: true, result: { id: deploymentId } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      },
+    },
+  )
+
+  assert.equal(result.id, deploymentId)
+  assert.match(capturedUrl, /\/deployments\?force=true$/)
+  assert.deepEqual(JSON.parse(capturedRequest.body), {
+    strategy: 'percentage',
+    versions: [{ percentage: 100, version_id: candidateVersion }],
+    annotations: { 'workers/message': 'BestCode rollback rehearsal' },
+  })
+})
+
+test('Cloudflare API failures preserve only bounded code and message diagnostics', async () => {
+  await assert.rejects(
+    apiRequest('https://api.cloudflare.test/deployments', {
+      token: 'test-token',
+      fetchImpl: async () => new Response(JSON.stringify({
+        success: false,
+        errors: [{ code: 10220, message: 'Use force to deploy an older version.' }],
+      }), { status: 400, headers: { 'Content-Type': 'application/json' } }),
+    }),
+    /API 400: code 10220: Use force to deploy an older version\./,
+  )
 })
