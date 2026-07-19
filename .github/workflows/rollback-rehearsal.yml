@@ -43,7 +43,7 @@ permissions:
 
 concurrency:
   group: bestcode-rollback-${{ github.event.inputs.worker || github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
   CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -225,14 +225,6 @@ jobs:
           STATUS_LABEL: rollback plan
           WORKFLOW_BRANCH: main
           WORKFLOW_FILE: rollback-rehearsal.yml
-        run: node scripts/github-workflow-status-bridge.mjs
-      - name: Publish main Test outcome
-        env:
-          EXPECTED_WORKFLOW_SHA: d8f7dd4b2634be5b389c2072acf9329d2ba3555e
-          STATUS_CONTEXT: BestCode/Main Test
-          STATUS_LABEL: test
-          WORKFLOW_BRANCH: main
-          WORKFLOW_FILE: test.yml
         run: node scripts/github-workflow-status-bridge.mjs
       - name: Publish main Validate outcome
         env:
