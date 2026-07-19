@@ -17,7 +17,7 @@ ChatGPT Action or MCP host
 → Cloudflare Workers
 ```
 
-The first `deployment_start` call never deploys. It creates a high-risk approval with no code changes. The approved operation is bound to one project, the project default branch, and one target: `backend`, `frontend`, or `all`.
+The first `deployment_start` call never deploys. It creates a high-risk approval with no code changes. The approved operation is bound to one project, the project default branch, one exact source SHA, and one target: `backend`, `frontend`, or `all`. If `main` moves before execution, the operation becomes `superseded`; no workflow dispatch occurs and a new approval is required.
 
 ## Required GitHub configuration
 

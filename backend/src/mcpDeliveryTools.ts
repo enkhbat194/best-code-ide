@@ -1,8 +1,8 @@
 import * as gh from './github'
-import { createTask, getApproval, getTask, listTasks, markCommitPrepared, markPullRequest, markPushed, updateTask } from './approvalClient'
+import { createTask, getApproval, getTask, listTasks, markCommitPrepared, markPullRequest, markPushed, markSuperseded, updateTask } from './approvalClient'
 import type { ApprovalOperation, TaskKind, TaskRecord } from './approvalStore'
 import * as agentGit from './agentGit'
-import { prepareCommit, pushPreparedCommit } from './gitDelivery'
+import { getBranchHead, prepareCommit, pushPreparedCommit } from './gitDelivery'
 import { getProject, type ProjectConfig } from './projects'
 import { cancelWorkflowTask, dispatchWorkflow, readTaskLogs, refreshWorkflowTask } from './workflowRunner'
 import type { Env } from './types'
@@ -241,6 +241,19 @@ function assertWorkingBranch(branch: string): void {
 }
 
 async function assertBaseShas(token: string, operation: ApprovalOperation): Promise<void> {
+  if (operation.base_context_sha) {
+    const currentHead = await getBranchHead(
+      token,
+      operation.repository.owner,
+      operation.repository.repo,
+      operation.branch,
+    )
+    if (currentHead !== operation.base_context_sha) {
+      throw new Error(
+        `CONTEXT_CONFLICT: ${operation.branch} changed from ${operation.base_context_sha} to ${currentHead}`,
+      )
+    }
+  }
   for (const change of operation.changes) {
     const current = await gh.getFile(token, operation.repository.owner, operation.repository.repo, change.path, operation.branch)
     if (change.action === 'create') {
@@ -280,7 +293,7 @@ function taskResult(task: TaskRecord) {
 function classify(error: unknown) {
   const message = error instanceof Error ? error.message : String(error)
   if (/PROTECTED_BRANCH/.test(message)) return { code: 'PROTECTED_BRANCH', message, retryable: false, action_required: 'Use an agent/<task> working branch.' }
-  if (/BASE_CONFLICT|BRANCH_CONFLICT/.test(message)) return { code: 'CONFLICT', message, retryable: false, action_required: 'Read the latest branch files and create a new staged approval operation.' }
+  if (/BASE_CONFLICT|BRANCH_CONFLICT|CONTEXT_CONFLICT/.test(message)) return { code: 'CONFLICT', message, retryable: false, action_required: 'Read the latest branch files and create a new staged approval operation.' }
   if (/status approved|status commit_prepared|status pushed|must be approved|must be pushed/i.test(message)) {
     return { code: 'INVALID_OPERATION_STATE', message, retryable: false, action_required: 'Complete approval, commit, push, build, and test in the required order.' }
   }
@@ -370,7 +383,15 @@ export async function executeDeliveryMcpTool(
       assertProject(operation, project)
       assertWorkingBranch(operation.branch)
       if (operation.status !== 'approved') throw new Error(`Operation must be approved; current status is ${operation.status}`)
-      await assertBaseShas(token, operation)
+      try {
+        await assertBaseShas(token, operation)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        if (/BASE_CONFLICT|CONTEXT_CONFLICT/.test(message)) {
+          await markSuperseded(env, operation.operation_id, message)
+        }
+        throw error
+      }
       const message = typeof args.message === 'string' && args.message.trim() ? args.message.trim() : operation.title
       const prepared = await prepareCommit(
         token,

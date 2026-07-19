@@ -65,6 +65,10 @@ function installGithubFiles(t, files) {
     const url = new URL(request.url)
     assert.equal(url.hostname, 'api.github.com')
     assert.equal(request.headers.get('authorization'), 'Bearer test-github-token')
+    if (request.method === 'GET' && url.pathname.includes('/branches/')) {
+      const branch = decodeURIComponent(url.pathname.split('/branches/')[1])
+      return githubJson({ name: branch, protected: false, commit: { sha: `branch-sha-${branch}` } })
+    }
     const marker = '/contents/'
     const index = url.pathname.indexOf(marker)
     if (request.method !== 'GET' || index === -1) throw new Error(`Unexpected GitHub request: ${request.method} ${request.url}`)

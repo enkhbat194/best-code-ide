@@ -94,6 +94,8 @@ export async function handleFilesCommit(req: Request, env: Env): Promise<Respons
     const path = normalizePath(body.path)
     const existing = await gh.getFile(githubToken, owner, repo, path, branch)
     if (existing?.content === body.content) return jsonError('The proposed content is identical to the branch content', 409)
+    const branchContext = await gh.getBranch(githubToken, owner, repo, branch)
+    if (!branchContext) return jsonError(`Branch not found: ${branch}`, 404)
 
     const operationId = crypto.randomUUID()
     const now = new Date()
@@ -122,6 +124,7 @@ export async function handleFilesCommit(req: Request, env: Env): Promise<Respons
       created_at: now.toISOString(),
       updated_at: now.toISOString(),
       expires_at: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(),
+      base_context_sha: branchContext.sha,
     }
 
     await createApproval(env, operation)

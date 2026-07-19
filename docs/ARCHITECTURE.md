@@ -48,6 +48,7 @@ BestCode PWA ────┘          │
 - server-side GitHub/DeepSeek secrets;
 - project allowlist;
 - read tools and staged approval-gated repository writes;
+- Durable Object terminal approval state, decision idempotency, TTL болон stale-context invalidation;
 - prepared commit → safe branch push → workflow → PR tools;
 - Project Brain canonical context/search;
 - durable development task and handoff;
@@ -115,6 +116,16 @@ Current shared Bearer auth нь foundation. Target:
 - revocation/rotation;
 - rate/replay/idempotency;
 - critical re-auth/owner confirmation.
+
+#### Approval coordination — PARTIAL
+
+- `pending_approval → approved | rejected | expired | superseded` decision boundary;
+- exact decision replay нь ижил idempotency key-ээр state дахин өөрчлөхгүй;
+- file/branch/deployment operation нь approved base/context SHA-тай pin хийгдэнэ;
+- stale context external write/dispatch-аас өмнө operation-ийг `superseded` болгоно;
+- PWA terminal status, TTL, context SHA харуулж decision товчийг disable хийнэ;
+- target gap: full semantic evidence card, capability identity, append-only decision audit,
+  generic execution lease/compensation.
 
 #### Risk engine — TARGET
 

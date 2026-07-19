@@ -40,10 +40,22 @@ export async function decideApproval(
   operationId: string,
   decision: 'approved' | 'rejected',
   actor = 'bestcode-user',
+  idempotencyKey?: string,
 ): Promise<ApprovalOperation> {
   return request<ApprovalOperation>(env, `/operations/${encodeURIComponent(operationId)}/decision`, {
     method: 'POST',
-    body: JSON.stringify({ decision, actor }),
+    body: JSON.stringify({ decision, actor, idempotency_key: idempotencyKey }),
+  })
+}
+
+export async function markSuperseded(
+  env: Env,
+  operationId: string,
+  reason: string,
+): Promise<ApprovalOperation> {
+  return request<ApprovalOperation>(env, `/operations/${encodeURIComponent(operationId)}/supersede`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
   })
 }
 

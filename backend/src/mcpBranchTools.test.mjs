@@ -269,6 +269,13 @@ test('branch deletion rejects a changed SHA without deleting the branch', async 
   assert.equal(result.structuredContent.error.code, 'BRANCH_DELETE_APPROVAL_MISMATCH')
   assert.match(result.structuredContent.error.message, /current branch SHA/)
   assert.equal(deleteCalls, 0)
+
+  const storedResponse = await stub.fetch(
+    `https://approval-store/operations/${pending.structuredContent.operation_id}`,
+  )
+  const stored = await storedResponse.json()
+  assert.equal(stored.status, 'superseded')
+  assert.match(stored.superseded_reason, /BRANCH_SHA_CHANGED/)
 })
 
 test('branch deletion blocks local and GitHub-protected branches', async (t) => {
