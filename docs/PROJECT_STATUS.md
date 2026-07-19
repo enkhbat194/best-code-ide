@@ -107,6 +107,18 @@ Cloudflare-ийн current official default нь non-production branch-д `wrangl
 
 Status: **OPEN P0 observability/control gap** — production source таамаг биш evidence байх ёстой.
 
+PR #16-ийн дараах анхны provider-level audit энэ gap-ийг бодитоор илрүүлсэн:
+
+- frontend preview trigger `wrangler versions upload` ашиглаж, production isolation зөв байсан;
+- backend preview trigger буруу `wrangler deploy` ашигласан;
+- PR #16 branch-ийн backend version 100% production traffic авсныг active deployment →
+  Workers Build branch/SHA mapping-аар баталсан;
+- `Release Integrity` workflow exact unsafe preview command-ийг guarded auto-repair
+  хийх ба latest `main` push backend production source-ийг сэргээх remediation-г эхлүүлсэн.
+
+Trigger repair, active `main` SHA, 100% traffic-ийн дараагийн success artifact гарах
+хүртэл incident status: **REMEDIATING**.
+
 Master v2 rule: `BC-R23` — non-main branch production traffic хэзээ ч авахгүй.
 
 Immediate next package: Phase 2.1A-г actual trigger audit, preview/production separation proof, mismatch auto-rollback, rollback rehearsal-аар дуусгах.

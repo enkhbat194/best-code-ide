@@ -172,6 +172,31 @@ export function assessTriggerPolicy(rawTriggers, expected) {
   }
 }
 
+export function planPreviewTriggerRepairs(rawTriggers, expected) {
+  const repairs = []
+  for (const rawTrigger of Array.isArray(rawTriggers) ? rawTriggers : []) {
+    if (boundedText(rawTrigger?.deleted_on, 80)) continue
+    const trigger = sanitizeTrigger(rawTrigger)
+    const exactPreviewBranches = sameStrings(trigger.branch_includes, ['*'])
+      && sameStrings(trigger.branch_excludes, [expected.branch])
+    const targetIsExact = validateTriggerTarget(trigger, expected).length === 0
+    if (
+      exactPreviewBranches
+      && targetIsExact
+      && trigger.deploy_mode === 'production_deploy'
+      && trigger.trigger_uuid
+    ) {
+      repairs.push({
+        trigger_uuid: trigger.trigger_uuid,
+        trigger_name: trigger.trigger_name,
+        before: trigger.deploy_command,
+        after: 'npx wrangler versions upload',
+      })
+    }
+  }
+  return repairs
+}
+
 function sanitizeDeployment(value) {
   const deployment = isObject(value) ? value : {}
   const versions = Array.isArray(deployment.versions) ? deployment.versions : []
@@ -299,9 +324,15 @@ function findBuildForVersion(result, versionId) {
   return Object.values(builds).find((build) => isObject(build)) ?? null
 }
 
-async function cloudflareRequest(path, { accountId, token, fetchImpl }) {
+async function cloudflareRequest(path, { accountId, token, fetchImpl }, request = {}) {
   const response = await fetchImpl(`${CLOUDFLARE_API_BASE}${path}`, {
-    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+    method: request.method ?? 'GET',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+      ...(request.body ? { 'Content-Type': 'application/json' } : {}),
+    },
+    body: request.body ? JSON.stringify(request.body) : undefined,
   })
   const text = await response.text()
   let body = null
@@ -342,6 +373,36 @@ async function loadTriggers(workerTag, options) {
   )
 }
 
+async function repairPreviewTriggers(workerIndex, options) {
+  const repaired = []
+  for (const worker of options.workers) {
+    const indexed = workerIndex.get(worker.name)
+    if (!indexed?.tag) continue
+    const expected = { ...worker, branch: options.branch, repository: options.repository, sha: options.sha }
+    const triggers = await loadTriggers(indexed.tag, options)
+    for (const item of planPreviewTriggerRepairs(triggers, expected)) {
+      const result = await cloudflareRequest(
+        `/accounts/${encodeURIComponent(options.accountId)}/builds/triggers/${encodeURIComponent(item.trigger_uuid)}`,
+        options,
+        { method: 'PATCH', body: { deploy_command: item.after } },
+      )
+      const updated = sanitizeTrigger(result)
+      if (updated.deploy_mode !== 'preview_upload') {
+        throw new Error(`${worker.name}: preview trigger repair response did not confirm versions upload`)
+      }
+      repaired.push({
+        worker: worker.name,
+        trigger_uuid: item.trigger_uuid,
+        trigger_name: item.trigger_name,
+        before: item.before,
+        after: updated.deploy_command,
+        repaired_at: new Date().toISOString(),
+      })
+    }
+  }
+  return repaired
+}
+
 async function loadActiveRelease(workerName, options) {
   const deploymentResult = await cloudflareRequest(
     `/accounts/${encodeURIComponent(options.accountId)}/workers/scripts/${encodeURIComponent(workerName)}/deployments`,
@@ -364,6 +425,9 @@ function sleep(ms) {
 export async function auditCloudflareProduction(options) {
   const checkedAt = new Date().toISOString()
   const workerIndex = await loadWorkerIndex(options)
+  const repairs = options.repairPreviewTriggers
+    ? await repairPreviewTriggers(workerIndex, options)
+    : []
   const configured = []
 
   for (const worker of options.workers) {
@@ -451,6 +515,7 @@ export async function auditCloudflareProduction(options) {
       redaction_applied: true,
       sensitivity: 'internal',
     },
+    repairs,
     workers: configured.map((worker) => ({
       ...worker,
       release: releases.find((release) => release.name === worker.name) ?? null,
@@ -483,6 +548,13 @@ function parseWorkers(value) {
   })
 }
 
+function parseBoolean(value, name) {
+  if (value === undefined) return false
+  if (value === 'true') return true
+  if (value === 'false') return false
+  throw new Error(`${name} must be true or false`)
+}
+
 function baseFailureEvidence(options, error) {
   return {
     evidence_id: `ev_release_${boundedText(options.runId, 80) || Date.now()}`,
@@ -511,6 +583,7 @@ function baseFailureEvidence(options, error) {
       redaction_applied: true,
       sensitivity: 'internal',
     },
+    repairs: [],
     workers: [],
   }
 }
@@ -531,6 +604,7 @@ async function runCli() {
     branch: boundedText(args.branch ?? 'main', 160).replace(/^refs\/heads\//, ''),
     sha: normalizeSha(args['expected-sha'] ?? process.env.GITHUB_SHA),
     workers: parseWorkers(process.env.BESTCODE_PRODUCTION_WORKERS),
+    repairPreviewTriggers: parseBoolean(args['repair-preview-triggers'], '--repair-preview-triggers'),
     waitSeconds: Number.parseInt(args['wait-seconds'] ?? '0', 10),
     pollSeconds: Number.parseInt(args['poll-seconds'] ?? '20', 10),
     runId: process.env.GITHUB_RUN_ID,

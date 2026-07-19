@@ -6,6 +6,7 @@ import {
   assessActiveDeployment,
   assessTriggerPolicy,
   classifyDeployCommand,
+  planPreviewTriggerRepairs,
   sanitizeTrigger,
 } from './cloudflare-release-integrity.mjs'
 
@@ -68,6 +69,42 @@ test('blocks wildcard production deploys and target mismatches', () => {
   assert.equal(result.ok, false)
   assert.ok(result.violations.some((item) => item.code === 'BC-R23-UNSAFE-BRANCH-FILTER'))
   assert.ok(result.violations.some((item) => item.code === 'BC-R23-PRODUCTION-TRIGGER-COUNT'))
+})
+
+test('repairs only an exact preview trigger aimed at the expected Worker target', () => {
+  const repairs = planPreviewTriggerRepairs([
+    {
+      trigger_uuid: 'repair-me',
+      branch_includes: ['*'],
+      branch_excludes: ['main'],
+      deploy_command: 'npx wrangler deploy',
+      root_directory: 'frontend',
+      repo_connection: repository,
+    },
+    {
+      trigger_uuid: 'leave-unknown-filter-alone',
+      branch_includes: ['agent/**'],
+      branch_excludes: [],
+      deploy_command: 'npx wrangler deploy',
+      root_directory: 'frontend',
+      repo_connection: repository,
+    },
+    {
+      trigger_uuid: 'leave-wrong-repo-alone',
+      branch_includes: ['*'],
+      branch_excludes: ['main'],
+      deploy_command: 'npx wrangler deploy',
+      root_directory: 'frontend',
+      repo_connection: { provider_type: 'github', repo_name: 'other/repository' },
+    },
+  ], expected)
+
+  assert.deepEqual(repairs, [{
+    trigger_uuid: 'repair-me',
+    trigger_name: null,
+    before: 'npx wrangler deploy',
+    after: 'npx wrangler versions upload',
+  }])
 })
 
 test('verifies exact active main SHA at 100 percent traffic', () => {
@@ -218,4 +255,81 @@ test('audits a Worker end to end through sanitized Cloudflare API responses', as
   assert.equal(evidence.workers[0].release.state, 'verified_main')
   assert.equal(requests.length, 4)
   assert.equal(JSON.stringify(evidence).includes('private-api-token'), false)
+})
+
+test('guarded repair patches an unsafe exact preview trigger before auditing', async () => {
+  let previewCommand = 'npx wrangler deploy'
+  const requests = []
+  const fetchImpl = async (url, init) => {
+    requests.push({ url, method: init.method, body: init.body })
+    let result
+    if (url.endsWith('/workers/scripts')) {
+      result = [{ id: expected.name, tag: 'worker-tag' }]
+    } else if (url.endsWith('/builds/workers/worker-tag/triggers')) {
+      result = [
+        {
+          trigger_uuid: 'production',
+          branch_includes: ['main'],
+          branch_excludes: [],
+          deploy_command: 'npx wrangler deploy',
+          root_directory: 'frontend',
+          repo_connection: repository,
+        },
+        {
+          trigger_uuid: 'preview',
+          branch_includes: ['*'],
+          branch_excludes: ['main'],
+          deploy_command: previewCommand,
+          root_directory: 'frontend',
+          repo_connection: repository,
+        },
+      ]
+    } else if (url.endsWith('/builds/triggers/preview') && init.method === 'PATCH') {
+      assert.deepEqual(JSON.parse(init.body), { deploy_command: 'npx wrangler versions upload' })
+      previewCommand = 'npx wrangler versions upload'
+      result = {
+        trigger_uuid: 'preview',
+        branch_includes: ['*'],
+        branch_excludes: ['main'],
+        deploy_command: previewCommand,
+        root_directory: 'frontend',
+        repo_connection: repository,
+      }
+    } else if (url.endsWith(`/workers/scripts/${expected.name}/deployments`)) {
+      result = { deployments: [{ id: 'deployment-id', versions: [{ version_id: 'version-id', percentage: 100 }] }] }
+    } else if (url.endsWith('/builds/builds?version_ids=version-id')) {
+      result = { builds: { 'version-id': {
+        build_outcome: 'success',
+        build_trigger_metadata: {
+          branch: 'main',
+          commit_hash: expected.sha,
+          deploy_command: 'npx wrangler deploy',
+        },
+        trigger: { root_directory: 'frontend', repo_connection: repository },
+      } } }
+    } else {
+      throw new Error(`Unexpected request: ${url}`)
+    }
+    return new Response(JSON.stringify({ success: true, result }), { status: 200 })
+  }
+
+  const evidence = await auditCloudflareProduction({
+    accountId: 'account-id',
+    token: 'private-api-token',
+    repository: expected.repository,
+    branch: expected.branch,
+    sha: expected.sha,
+    workers: [{ name: expected.name, root_directory: expected.root_directory }],
+    repairPreviewTriggers: true,
+    waitSeconds: 0,
+    pollSeconds: 5,
+    runId: 'repair-run',
+    fetchImpl,
+  })
+
+  assert.equal(evidence.execution.conclusion, 'success')
+  assert.equal(evidence.repairs.length, 1)
+  assert.equal(evidence.repairs[0].trigger_uuid, 'preview')
+  assert.equal(evidence.workers[0].trigger_policy.ok, true)
+  assert.equal(requests.filter((request) => request.method === 'PATCH').length, 1)
 })

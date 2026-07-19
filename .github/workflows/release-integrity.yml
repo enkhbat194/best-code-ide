@@ -38,6 +38,7 @@ jobs:
           --repository "$GITHUB_REPOSITORY"
           --branch main
           --expected-sha "$GITHUB_SHA"
+          --repair-preview-triggers true
           --wait-seconds 900
           --poll-seconds 20
           --output artifacts/release-integrity.json

@@ -97,9 +97,15 @@ traffic зэрэг integrity incident-ийг retry хийхгүй шууд failu
 санитизац хийсэн JSON evidence `release-integrity-<run-id>` artifact болж 30 хоног
 хадгалагдана.
 
-Энэ шат read-only detector. Mismatch дээр production traffic-ийг автоматаар өөрчлөхгүй;
-exact previous-good version, binding compatibility, smoke evidence бүрдсэн rollback
-controller дараагийн тусдаа high-risk багц байна.
+Exact preview filter (`*` include, `main` exclude), expected repository/root таарсан мөртөө
+production `wrangler deploy` command-тай trigger илэрвэл workflow command-ийг
+`wrangler versions upload` болгон guarded auto-repair хийнэ. Өөр branch filter,
+repository, root эсвэл production trigger-ийг автоматаар өөрчлөхгүй.
+
+Active source mismatch дээр production traffic-ийг энэ audit шууд өөрчлөхгүй; latest
+`main` push өөрөө production trigger-ээр source-ийг сэргээнэ. Exact previous-good
+version, binding compatibility, smoke evidence бүрдсэн rollback controller дараагийн
+тусдаа high-risk багц байна.
 
 Verify these names in Cloudflare before the first production deployment. Deployment status is taken from the actual GitHub Actions run; missing secrets or Cloudflare failures are returned as real failures.
 
