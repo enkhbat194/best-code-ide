@@ -71,11 +71,11 @@ Trust boundary бүрт identity, capability, validation, audit, timeout, data c
 
 **Required:** untrusted content separation, instruction/data boundary, least-capability tool context, injection flag, output validation, critical operation owner approval, conformance corpus.
 
-### T3 — Non-main branch production traffic — P0
+### T3 — Non-main branch production traffic / unverifiable source — P0
 
-**Observed incident:** Git-integrated Cloudflare deployment нь PR branch build-ийг merge-ээс өмнө active production traffic-д оруулсан. Main merge хийсний дараа production main-тэй таарсан ч энэ нь release integrity breach.
+**Observed integrity finding:** Git-integrated Cloudflare deployment history-д PR branch version merge-ээс өмнө харагдсан. Тухайн үед active traffic → branch/SHA mapping durable evidence-д бичигдээгүй тул production traffic авсан эсэхийг одоо баттай дүгнэх боломжгүй. Cloudflare-ийн documented default нь non-production branch-д preview version upload хийх боловч actual trigger configuration-ийг audit хийгээгүй.
 
-**Required:** production environment source restriction, branch preview тусдаа hostname, traffic assertion, approved main SHA allowlist, deployment webhook/evidence, mismatch auto-rollback, release pause.
+**Required:** actual build trigger audit, production environment source restriction, branch preview тусдаа URL, traffic/source assertion, approved main SHA allowlist, deployment evidence, mismatch auto-rollback, release pause.
 
 ### T4 — CI/workflow privilege escalation — P0
 

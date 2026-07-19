@@ -1,8 +1,10 @@
 # BestCode production deployment
 
-> **P0 integrity notice (2026-07-19):** Cloudflare Git integration for the installed `best-code-ide-appl` PWA activated a non-main PR branch deployment before merge. The manual `deploy.yml` flow below is therefore not the only effective deployment path. Until Phase 2.1 source-lock controls are verified, every release must confirm active branch/SHA and non-main builds must be treated as potentially unsafe for production traffic.
+> **P0 integrity notice (2026-07-19):** Cloudflare Git integration showed a non-main PR branch version in deployment history before merge, but BestCode did not persist enough branch/SHA/traffic evidence to prove whether that version received production traffic. Cloudflare's documented default is preview upload for non-production branches. Until Phase 2.1 verifies the actual trigger configuration and active source, every release must confirm active branch/SHA instead of inferring it from version history.
 
 Master v2 rule `BC-R23`: non-main branch deployment must never receive production traffic. Required remediation and exit evidence are in `docs/ROADMAP.md` Phase 2.1A and `docs/EVIDENCE_STANDARD.md` Release evidence.
+
+Official current behavior: <https://developers.cloudflare.com/workers/ci-cd/builds/configuration/>.
 
 ## Architecture
 

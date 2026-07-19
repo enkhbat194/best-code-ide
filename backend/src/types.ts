@@ -7,6 +7,11 @@ export interface Env {
   ENABLE_LEGACY_AGENT?: string
   ENABLE_LEGACY_REST_WRITES?: string
   REQUIRE_APPROVALS?: string
+  CF_VERSION_METADATA?: {
+    id: string
+    tag?: string
+    timestamp: string
+  }
   APPROVALS: DurableObjectNamespace
 }
 

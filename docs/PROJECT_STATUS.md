@@ -63,13 +63,26 @@ Scope:
 - detailed Phase 2.1–10 execution roadmap;
 - Project Brain canonical memory path expansion.
 
+Implementation progress on this working branch:
+
+- manual deploy workflow-д `main`-only `BC-R23` guard;
+- backend `/api/release` source integrity contract;
+- Cloudflare Worker version metadata binding;
+- PWA build-д branch/SHA/build ID embedding;
+- Settings дээр production/preview/stale/unverified release card;
+- exact `main` SHA policy tests.
+
+Validation: backend 26/26 tests + typecheck, frontend lint + production PWA build green. Энэ нь merge/deploy evidence биш; production trigger audit, active URL verification, rollback rehearsal үлдсэн.
+
 This document becomes canonical only after owner-approved PR, green CI, merge and production context verification.
 
-## 4. Verified integrity incident
+## 4. Deployment integrity finding
 
-Cloudflare Git integration өмнөх PR branch-ийн build-ийг merge-ээс өмнө active deployment болгосон. Merge-ийн дараа production `main`-тай дахин таарсан боловч branch code production traffic авсан нь BestCode-ийн intended policy-тэй зөрчилдөнө.
+Cloudflare Git integration өмнөх PR branch-ийн version-ийг merge-ээс өмнө deployment history-д харуулсан. Гэхдээ тухайн үед BestCode active traffic → branch → SHA холбоосыг durable evidence болгож хадгалаагүй. Иймээс branch version production traffic авсан гэж баттай хэлэх боломжгүй; өмнөх тайлан энэ дүгнэлтийг хэт итгэлтэй гаргасан.
 
-Status: **OPEN P0 design/control gap**.
+Cloudflare-ийн current official default нь non-production branch-д `wrangler versions upload` ашиглан preview version үүсгэх явдал. Actual dashboard trigger configuration хараахан audit хийгдээгүй.
+
+Status: **OPEN P0 observability/control gap** — production source таамаг биш evidence байх ёстой.
 
 Master v2 rule: `BC-R23` — non-main branch production traffic хэзээ ч авахгүй.
 
@@ -95,15 +108,15 @@ Immediate next package: Phase 2.1A deployment source lock, active SHA assertion,
 
 ### P0
 
-- Non-main Git-integrated deployment production traffic авч чадсан.
-- Production active version/source assertion owner-facing биш.
+- Active PWA deployment-ийн branch/SHA/traffic mapping нотлогдохгүй байна; actual Cloudflare trigger audit шаардлагатай.
+- Release assertion card энэ package-д нэмэгдсэн; production дээрх active URL/SHA verification хийгдээгүй.
 - Approval UI terminal status дээр дахин decision илгээж алдаа харуулсан.
 - Shared token-д rate/replay/per-client capability байхгүй.
 - Critical workflow/path class болон independent review хэрэгжээгүй.
 
 ### P1
 
-- Installed PWA update/version/rollback UI байхгүй.
+- Installed PWA-д build/source card ба stale reload нэмэгдсэн; update-available banner, history, rollback UI байхгүй.
 - Preview diagnostics external AI/DeepSeek-д structured tool-оор очихгүй.
 - Evidence record/redaction/acceptance mapping байхгүй.
 - Task lease/heartbeat/idempotency бүрэн биш.
@@ -122,7 +135,7 @@ Immediate next package: Phase 2.1A deployment source lock, active SHA assertion,
 
 ## 7. Next execution order
 
-1. Phase 2.1A — production branch/source lock.
+1. Phase 2.1A — package-ийг merge/deploy хийж, production trigger/source/rollback evidence-ээр дуусгах.
 2. Phase 2.1B — approval terminal-state/idempotency.
 3. Phase 2.1C/D — auth/rate/redaction/critical path conformance.
 4. Phase 3 — mobile version/update/semantic approval/rollback.

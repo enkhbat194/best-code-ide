@@ -1,14 +1,124 @@
+import { useCallback, useEffect, useState } from 'react'
+import { GitBranch, RefreshCw, RotateCw, Server, ShieldAlert, ShieldCheck } from 'lucide-react'
+import { getReleaseIntegrity, type ReleaseIntegrity, type ReleaseIntegrityStatus } from '../../lib/repoAgent'
+import { clientRelease, shortSha } from '../../lib/release'
 import { useSettingsStore } from '../../store/settingsStore'
 import styles from './SettingsView.module.css'
+
+const statusCopy: Record<ReleaseIntegrityStatus, { label: string; tone: string }> = {
+  verified_main: { label: 'Production source баталгаатай', tone: 'ok' },
+  stale_main: { label: 'Шинэчлэлт байна', tone: 'warn' },
+  preview_build: { label: 'Preview branch build', tone: 'danger' },
+  unverified: { label: 'Source нотолгоо дутуу', tone: 'neutral' },
+}
+
+function formatDate(value: string | null | undefined): string {
+  if (!value) return '—'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('mn-MN')
+}
 
 export function SettingsView() {
   const s = useSettingsStore()
   const configured = s.isConfigured()
+  const [release, setRelease] = useState<ReleaseIntegrity | null>(null)
+  const [releaseError, setReleaseError] = useState('')
+  const [checkingRelease, setCheckingRelease] = useState(false)
+
+  const refreshRelease = useCallback(async () => {
+    if (!useSettingsStore.getState().isConfigured()) return
+    setCheckingRelease(true)
+    setReleaseError('')
+    try {
+      setRelease(await getReleaseIntegrity(clientRelease))
+    } catch (error) {
+      setReleaseError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setCheckingRelease(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!configured) {
+      setRelease(null)
+      return
+    }
+    void refreshRelease()
+  }, [configured, refreshRelease, s.backendUrl, s.authToken, s.owner, s.repo])
+
+  const integrityStatus: ReleaseIntegrityStatus = release?.integrity.status ?? 'unverified'
+  const status = statusCopy[integrityStatus]
+  const StatusIcon = integrityStatus === 'verified_main' ? ShieldCheck : ShieldAlert
 
   return (
     <div className={`${styles.wrap} scroll-y`}>
+      <section className={styles.releaseCard} aria-live="polite">
+        <div className={styles.releaseHeader}>
+          <div>
+            <span className={styles.eyebrow}>RELEASE &amp; INTEGRITY</span>
+            <h2>Одоогийн PWA хувилбар</h2>
+          </div>
+          <button
+            className={styles.iconButton}
+            type="button"
+            onClick={() => void refreshRelease()}
+            disabled={!configured || checkingRelease}
+            aria-label="Release төлөв шинэчлэх"
+          >
+            <RefreshCw size={18} className={checkingRelease ? styles.spinning : ''} />
+          </button>
+        </div>
+
+        <div className={`${styles.integrityBadge} ${styles[status.tone]}`}>
+          <StatusIcon size={18} />
+          <span>{status.label}</span>
+        </div>
+
+        <p className={styles.releaseReason}>
+          {release?.integrity.reason ?? (
+            configured
+              ? releaseError || 'Backend-ээс source evidence шалгаж байна…'
+              : 'Backend тохируулсны дараа энэ PWA-ийн branch ба SHA-г GitHub main-тай тулгана.'
+          )}
+        </p>
+
+        <div className={styles.releaseGrid}>
+          <div className={styles.releaseRow}>
+            <GitBranch size={16} />
+            <span>App source</span>
+            <strong>{clientRelease.branch} · {shortSha(clientRelease.sha)}</strong>
+          </div>
+          <div className={styles.releaseRow}>
+            <GitBranch size={16} />
+            <span>GitHub main</span>
+            <strong>{shortSha(release?.repository.main_sha)}</strong>
+          </div>
+          <div className={styles.releaseRow}>
+            <Server size={16} />
+            <span>Backend</span>
+            <strong>{release?.backend.build ?? 'шалгаагүй'}</strong>
+          </div>
+          <div className={styles.releaseRow}>
+            <RotateCw size={16} />
+            <span>Шалгасан</span>
+            <strong>{formatDate(release?.checked_at)}</strong>
+          </div>
+        </div>
+
+        {integrityStatus === 'stale_main' && (
+          <button className={styles.reloadButton} type="button" onClick={() => window.location.reload()}>
+            PWA-г дахин ачаалах
+          </button>
+        )}
+
+        <div className={styles.releaseMeta}>
+          Build: {clientRelease.environment} · {clientRelease.buildId} · {formatDate(clientRelease.builtAt)}
+          {release?.backend.version_id ? ` · Worker ${release.backend.version_id.slice(0, 8)}` : ''}
+        </div>
+      </section>
+
       <div className={styles.status}>
-        <span className={`${styles.dot} ${configured ? styles.ok : ''}`} />
+        <span className={`${styles.dot} ${configured ? styles.connected : ''}`} />
         {configured ? 'Backend тохируулагдсан' : 'Backend тохируулаагүй байна'}
       </div>
 
@@ -51,7 +161,7 @@ export function SettingsView() {
 
       <p className={styles.hint}>
         DeepSeek API key болон GitHub token нь энэ апп дотор биш, зөвхөн Cloudflare Worker дээр нууцаар
-        хадгалагдана. Энд оруулсан "Auth token" нь зөвхөн энэ апп/AI chat-ыг таны Worker-тэй холбоход
+        хадгалагдана. Энд оруулсан &quot;Auth token&quot; нь зөвхөн энэ апп/AI chat-ыг таны Worker-тэй холбоход
         ашиглагдана.
       </p>
     </div>

@@ -2,8 +2,28 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
+const releaseBranch = (process.env.WORKERS_CI_BRANCH ?? process.env.GITHUB_REF_NAME ?? 'local')
+  .replace(/^refs\/heads\//, '')
+const releaseSha = process.env.WORKERS_CI_COMMIT_SHA ?? process.env.GITHUB_SHA ?? 'unknown'
+const releaseBuildId = process.env.WORKERS_CI_BUILD_UUID ?? process.env.GITHUB_RUN_ID ?? 'local'
+const releaseEnvironment = process.env.WORKERS_CI
+  ? 'cloudflare-workers-builds'
+  : process.env.GITHUB_ACTIONS
+    ? 'github-actions'
+    : 'local'
+
 // https://vite.dev/config/
 export default defineConfig({
+  define: {
+    __BESTCODE_RELEASE__: JSON.stringify({
+      app: 'best-code-ide',
+      branch: releaseBranch,
+      sha: releaseSha,
+      buildId: releaseBuildId,
+      environment: releaseEnvironment,
+      builtAt: new Date().toISOString(),
+    }),
+  },
   plugins: [
     react(),
     VitePWA({
@@ -12,7 +32,7 @@ export default defineConfig({
       manifest: {
         name: 'best-code-ide',
         short_name: 'CodeIDE',
-        description: 'Mobile AI coding assistant — chat, edit, and push to GitHub from your iPhone.',
+        description: 'Private mobile-first Personal Creation OS with governed AI, evidence, and safe delivery.',
         theme_color: '#0b0d12',
         background_color: '#0b0d12',
         display: 'standalone',

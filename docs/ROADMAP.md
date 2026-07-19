@@ -74,7 +74,7 @@ UI дээр terminal approval state-ийг зөв тусгах хэрэгтэй.
 
 ---
 
-## Phase 2.1 — Production Integrity & Security Floor — NEXT / P0
+## Phase 2.1 — Production Integrity & Security Floor — IN PROGRESS / P0
 
 ### Owner outcome
 
@@ -91,6 +91,8 @@ UI дээр terminal approval state-ийг зөв тусгах хэрэгтэй.
 - deploy workflow/documentation нэг source of truth болно.
 
 **Exit evidence:** agent branch зориудаар deploy trigger хийсэн ч production active SHA өөрчлөгдөхгүй; main release болон rollback test ногоон.
+
+**Current package progress:** `main`-only workflow guard, backend `/api/release` contract, embedded PWA branch/SHA/build metadata, Worker version binding, owner-facing integrity card, release policy tests. Production trigger audit, active deployment proof, mismatch auto-rollback, rollback rehearsal remain open.
 
 ### Work package 2.1B — Approval/idempotency fix
 
