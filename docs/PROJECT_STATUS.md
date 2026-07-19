@@ -2,18 +2,22 @@
 
 Last updated: 2026-07-19
 
-Canonical plan after this package merges: `/BESTCODE_MASTER.md` v2.0.0 (`LOCKED`)
+Canonical plan: `/BESTCODE_MASTER.md` v2.0.0 (`LOCKED`)
 
 ## 1. Production source of truth
 
 - Repository: `enkhbat194/best-code-ide`
 - Default branch: `main`
-- Verified `main` before Master v2 package: `7695b1b36a38c6d30d5ed485204d46ed45692610`
+- Verified active `main`: `5be5d7d5ceb20b5de7c51a6a2d8a98b45744cdf3`
+- Release PR: `https://github.com/enkhbat194/best-code-ide/pull/13`
 - Backend: `https://best-code-ide.enkhbat194.workers.dev`
-- Backend health verified: `{"ok":true,"build":"project-brain-v1"}`
+- Backend health build: `master-v2-integrity-v1`
+- Backend Worker version: `2708809d-e2ae-425f-a490-b0f74837b664`
 - Installed PWA: `https://best-code-ide-appl.enkhbat194.workers.dev`
+- Installed PWA asset: `index-BRu5vTi5.js`
+- Embedded PWA source: `main` at `5be5d7d5ceb20b5de7c51a6a2d8a98b45744cdf3`
+- PWA Cloudflare build ID: `7b782967-11df-469d-9549-26d697ad0f0a`
 - Manual frontend target: `https://best-code-ide-app.enkhbat194.workers.dev`
-- Known remote branches before this package: `main`, merged `agent/project-brain-v1`
 
 AI/chat claim нь дээрх GitHub/deployment evidence-ийг орлохгүй.
 
@@ -45,9 +49,11 @@ AI/chat claim нь дээрх GitHub/deployment evidence-ийг орлохгүй
 - Tokenless Actions/MCP 401 security smoke.
 - Production health build `project-brain-v1`.
 
-## 3. Master v2 package
+## 3. Master v2 + Release Integrity v1 — RELEASED
 
-Working branch: `agent/master-v2-creation-os`
+Source branch: `agent/master-v2-creation-os`
+
+Merged by PR #13 into `main` at `5be5d7d5ceb20b5de7c51a6a2d8a98b45744cdf3`.
 
 Scope:
 
@@ -63,7 +69,7 @@ Scope:
 - detailed Phase 2.1–10 execution roadmap;
 - Project Brain canonical memory path expansion.
 
-Implementation progress on this working branch:
+Released implementation:
 
 - manual deploy workflow-д `main`-only `BC-R23` guard;
 - backend `/api/release` source integrity contract;
@@ -72,9 +78,18 @@ Implementation progress on this working branch:
 - Settings дээр production/preview/stale/unverified release card;
 - exact `main` SHA policy tests.
 
-Validation: backend 26/26 tests + typecheck, frontend lint + production PWA build green. Энэ нь merge/deploy evidence биш; production trigger audit, active URL verification, rollback rehearsal үлдсэн.
+Release evidence:
 
-This document becomes canonical only after owner-approved PR, green CI, merge and production context verification.
+- PR Test ба Validate workflows success;
+- backend 26/26 tests + typecheck green;
+- frontend lint + production PWA build green;
+- remote Git tree local tree-тэй `ee38a73461e6ed247f2fab0876c5b931f60e8363` SHA-аар яг таарсан;
+- backend `/health` шинэ build болон Worker version metadata-г production дээр буцаасан;
+- public PWA bundle `main` merge SHA-г embed хийсэн;
+- service worker шинэ JS/CSS asset-ийг precache хийж `skipWaiting` + `clientsClaim` идэвхжүүлсэн;
+- public browser smoke Settings release card, `main · 5be5d7d5`, build metadata-г render хийснийг баталсан.
+
+Үлдсэн: actual Cloudflare trigger configuration audit, preview/production isolation proof, mismatch auto-rollback, rollback rehearsal.
 
 ## 4. Deployment integrity finding
 
@@ -86,7 +101,7 @@ Status: **OPEN P0 observability/control gap** — production source таамаг
 
 Master v2 rule: `BC-R23` — non-main branch production traffic хэзээ ч авахгүй.
 
-Immediate next package: Phase 2.1A deployment source lock, active SHA assertion, preview/production separation, rollback rehearsal.
+Immediate next package: Phase 2.1A-г actual trigger audit, preview/production separation proof, mismatch auto-rollback, rollback rehearsal-аар дуусгах.
 
 ## 5. Current live capability vs target
 
@@ -98,7 +113,7 @@ Immediate next package: Phase 2.1A deployment source lock, active SHA assertion,
 | Files | IndexedDB/GitHub import | professional tree/tabs/search/conflict |
 | Preview | local preview + UI console capture | diagnostics evidence + AI repair loop |
 | Approval | operation UI | semantic outcome/evidence/rollback, terminal state fix |
-| Git delivery | branch/commit/push/PR foundation | release source lock and active SHA proof |
+| Git delivery | branch/commit/push/PR + production build/source assertion v1 | trigger audit, previous-good rollback, automated mismatch stop |
 | Research | none | safe search/source/claim/dossier pipeline |
 | Runner | GitHub workflow dispatch only | isolated ephemeral terminal/build plane |
 | Evidence | scattered GitHub/CI metadata | canonical append-only evidence records |
@@ -108,8 +123,7 @@ Immediate next package: Phase 2.1A deployment source lock, active SHA assertion,
 
 ### P0
 
-- Active PWA deployment-ийн branch/SHA/traffic mapping нотлогдохгүй байна; actual Cloudflare trigger audit шаардлагатай.
-- Release assertion card энэ package-д нэмэгдсэн; production дээрх active URL/SHA verification хийгдээгүй.
+- Current PWA bundle/main SHA mapping verified; actual Cloudflare trigger configuration ба non-main traffic isolation audit шаардлагатай.
 - Approval UI terminal status дээр дахин decision илгээж алдаа харуулсан.
 - Shared token-д rate/replay/per-client capability байхгүй.
 - Critical workflow/path class болон independent review хэрэгжээгүй.
@@ -135,7 +149,7 @@ Immediate next package: Phase 2.1A deployment source lock, active SHA assertion,
 
 ## 7. Next execution order
 
-1. Phase 2.1A — package-ийг merge/deploy хийж, production trigger/source/rollback evidence-ээр дуусгах.
+1. Phase 2.1A — production trigger audit, preview isolation, mismatch stop, rollback rehearsal-аар дуусгах.
 2. Phase 2.1B — approval terminal-state/idempotency.
 3. Phase 2.1C/D — auth/rate/redaction/critical path conformance.
 4. Phase 3 — mobile version/update/semantic approval/rollback.
