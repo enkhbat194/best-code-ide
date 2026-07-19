@@ -92,7 +92,7 @@ UI дээр terminal approval state-ийг зөв тусгах хэрэгтэй.
 
 **Exit evidence:** agent branch зориудаар deploy trigger хийсэн ч production active SHA өөрчлөгдөхгүй; main release болон rollback test ногоон.
 
-**Current package progress:** PR #13 merged and production deployed. `main`-only workflow guard, backend `/api/release` contract, embedded PWA branch/SHA/build metadata, Worker version binding, owner-facing integrity card, release policy tests, public backend/PWA/service-worker smoke are green. PR #16 adds the Cloudflare trigger/active-version auditor, exact branch/SHA/traffic tests, post-main evidence artifact, and canonical installed-PWA target. Its first live run proved the backend preview trigger could deploy to production; guarded exact-trigger repair and latest-main recovery are in progress. Success evidence, general mismatch rollback, and rollback rehearsal remain exit requirements.
+**Current package progress:** PR #13 merged and production deployed. `main`-only workflow guard, backend `/api/release` contract, embedded PWA branch/SHA/build metadata, Worker version binding, owner-facing integrity card, release policy tests, public backend/PWA/service-worker smoke are green. PR #16 adds the Cloudflare trigger/active-version auditor, exact branch/SHA/traffic tests, post-main evidence artifact, and canonical installed-PWA target. Its first live run proved the backend preview trigger could deploy to production; run `29677501043` then repaired the trigger and verified both Workers on exact `main` at 100% traffic. Deliberate non-main isolation proof, general mismatch rollback, and rollback rehearsal remain exit requirements.
 
 ### Work package 2.1B — Approval/idempotency fix
 

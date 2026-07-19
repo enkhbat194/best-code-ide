@@ -318,10 +318,92 @@ export function assessActiveDeployment(rawDeployments, rawBuild, expected) {
   }
 }
 
+export function assessPreviewBuild(rawBuild, expected) {
+  const build = rawBuild ? sanitizeBuild(rawBuild) : null
+  if (!build) {
+    return {
+      ok: false,
+      state: 'waiting_for_preview',
+      retryable: true,
+      violations: [violation(
+        'BC-R23-PREVIEW-BUILD-MISSING',
+        `${expected.name}: ${expected.preview_branch} preview build хараахан олдсонгүй.`,
+      )],
+      build: null,
+    }
+  }
+
+  const violations = []
+  if (!build.outcome) {
+    return {
+      ok: false,
+      state: 'waiting_for_preview',
+      retryable: true,
+      violations: [violation(
+        'BC-R23-PREVIEW-BUILD-PENDING',
+        `${expected.name}: preview build дуусаагүй байна.`,
+      )],
+      build,
+    }
+  }
+  if (build.outcome !== 'success') {
+    violations.push(violation(
+      'BC-R23-PREVIEW-BUILD-FAILED',
+      `${expected.name}: preview build outcome “${build.outcome}”.`,
+    ))
+  }
+  if (build.branch !== expected.preview_branch) {
+    violations.push(violation(
+      'BC-R23-PREVIEW-BRANCH-MISMATCH',
+      `${expected.name}: preview branch expected value-тэй таарахгүй.`,
+    ))
+  }
+  if (build.commit_sha !== expected.preview_sha) {
+    violations.push(violation(
+      'BC-R23-PREVIEW-SHA-MISMATCH',
+      `${expected.name}: preview commit expected value-тэй таарахгүй.`,
+    ))
+  }
+  if (build.deploy_mode !== 'preview_upload') {
+    violations.push(violation(
+      'BC-R23-PREVIEW-DEPLOYED',
+      `${expected.name}: probe branch “wrangler versions upload” ашиглаагүй.`,
+    ))
+  }
+  if (build.root_directory && build.root_directory !== normalizePath(expected.root_directory)) {
+    violations.push(violation(
+      'BC-R23-PREVIEW-ROOT-MISMATCH',
+      `${expected.name}: preview root expected ${expected.root_directory}-тэй таарахгүй.`,
+    ))
+  }
+  if (build.repository.repo_name && !repoMatches(build.repository.repo_name, expected.repository)) {
+    violations.push(violation(
+      'BC-R23-PREVIEW-REPOSITORY-MISMATCH',
+      `${expected.name}: preview repository expected ${expected.repository}-тэй таарахгүй.`,
+    ))
+  }
+
+  return {
+    ok: violations.length === 0,
+    state: violations.length === 0 ? 'verified_preview_only' : 'preview_isolation_failed',
+    retryable: false,
+    violations,
+    build,
+  }
+}
+
 function findBuildForVersion(result, versionId) {
   const builds = isObject(result) && isObject(result.builds) ? result.builds : {}
   if (isObject(builds[versionId])) return builds[versionId]
   return Object.values(builds).find((build) => isObject(build)) ?? null
+}
+
+function findPreviewBuild(result, branch, sha) {
+  const builds = Array.isArray(result) ? result : []
+  return builds.find((candidate) => {
+    const build = sanitizeBuild(candidate)
+    return build.branch === branch && build.commit_sha === sha
+  }) ?? null
 }
 
 async function cloudflareRequest(path, { accountId, token, fetchImpl }, request = {}) {
@@ -418,6 +500,14 @@ async function loadActiveRelease(workerName, options) {
   return { deployments, build: findBuildForVersion(buildsResult, versionId) }
 }
 
+async function loadPreviewBuild(workerTag, options) {
+  const builds = await cloudflareRequest(
+    `/accounts/${encodeURIComponent(options.accountId)}/builds/workers/${encodeURIComponent(workerTag)}/builds`,
+    options,
+  )
+  return findPreviewBuild(builds, options.previewBranch, options.previewSha)
+}
+
 function sleep(ms) {
   return new Promise((resolvePromise) => setTimeout(resolvePromise, ms))
 }
@@ -459,6 +549,7 @@ export async function auditCloudflareProduction(options) {
   const configurationOk = configured.every((worker) => worker.trigger_policy.ok)
   const deadline = Date.now() + options.waitSeconds * 1000
   let releases = []
+  let previewProbes = []
   let attempt = 0
 
   do {
@@ -482,13 +573,44 @@ export async function auditCloudflareProduction(options) {
       }
     }
 
-    if (configurationOk && releases.every((release) => release.ok)) break
-    const onlyRetryableReleaseLag = configurationOk && releases.every((release) => release.ok || release.retryable)
-    if (!onlyRetryableReleaseLag || Date.now() >= deadline) break
+    previewProbes = []
+    if (options.previewBranch && options.previewSha) {
+      for (const worker of options.workers) {
+        const indexed = workerIndex.get(worker.name)
+        const expected = {
+          ...worker,
+          repository: options.repository,
+          preview_branch: options.previewBranch,
+          preview_sha: options.previewSha,
+        }
+        try {
+          const build = indexed?.tag ? await loadPreviewBuild(indexed.tag, options) : null
+          previewProbes.push({ name: worker.name, ...assessPreviewBuild(build, expected) })
+        } catch (error) {
+          previewProbes.push({
+            name: worker.name,
+            ok: false,
+            state: 'waiting_for_preview',
+            retryable: true,
+            violations: [violation('BC-R23-PREVIEW-QUERY-FAILED', boundedText(error?.message ?? error, 500))],
+            build: null,
+          })
+        }
+      }
+    }
+
+    const previewOk = previewProbes.every((probe) => probe.ok)
+    if (configurationOk && releases.every((release) => release.ok) && previewOk) break
+    const onlyRetryableLag = configurationOk
+      && releases.every((release) => release.ok || release.retryable)
+      && previewProbes.every((probe) => probe.ok || probe.retryable)
+    if (!onlyRetryableLag || Date.now() >= deadline) break
     await (options.sleepImpl ?? sleep)(options.pollSeconds * 1000)
   } while (true)
 
-  const ok = configurationOk && releases.every((release) => release.ok)
+  const ok = configurationOk
+    && releases.every((release) => release.ok)
+    && previewProbes.every((probe) => probe.ok)
   return {
     evidence_id: `ev_release_${boundedText(options.runId, 80) || Date.now()}`,
     schema_version: 1,
@@ -505,6 +627,9 @@ export async function auditCloudflareProduction(options) {
       branch: options.branch,
       commit_sha: options.sha,
       workers: options.workers.map((worker) => worker.name),
+      preview_probe: options.previewBranch && options.previewSha
+        ? { branch: options.previewBranch, commit_sha: options.previewSha }
+        : null,
     },
     execution: {
       checked_at: checkedAt,
@@ -519,6 +644,7 @@ export async function auditCloudflareProduction(options) {
     workers: configured.map((worker) => ({
       ...worker,
       release: releases.find((release) => release.name === worker.name) ?? null,
+      preview_probe: previewProbes.find((probe) => probe.name === worker.name) ?? null,
     })),
   }
 }
@@ -572,6 +698,9 @@ function baseFailureEvidence(options, error) {
       branch: options.branch || null,
       commit_sha: options.sha || null,
       workers: options.workers?.map((worker) => worker.name) ?? [],
+      preview_probe: options.previewBranch && options.previewSha
+        ? { branch: options.previewBranch, commit_sha: options.previewSha }
+        : null,
     },
     execution: {
       checked_at: new Date().toISOString(),
@@ -603,6 +732,8 @@ async function runCli() {
     repository: boundedText(args.repository ?? process.env.GITHUB_REPOSITORY, 240),
     branch: boundedText(args.branch ?? 'main', 160).replace(/^refs\/heads\//, ''),
     sha: normalizeSha(args['expected-sha'] ?? process.env.GITHUB_SHA),
+    previewBranch: boundedText(args['expected-preview-branch'], 160).replace(/^refs\/heads\//, '') || null,
+    previewSha: args['expected-preview-sha'] ? normalizeSha(args['expected-preview-sha']) : null,
     workers: parseWorkers(process.env.BESTCODE_PRODUCTION_WORKERS),
     repairPreviewTriggers: parseBoolean(args['repair-preview-triggers'], '--repair-preview-triggers'),
     waitSeconds: Number.parseInt(args['wait-seconds'] ?? '0', 10),
@@ -619,6 +750,12 @@ async function runCli() {
     if (!options.repository) throw new Error('GITHUB_REPOSITORY is missing')
     if (!options.sha) throw new Error('GITHUB_SHA must be a full 40-character commit SHA')
     if (options.branch !== 'main') throw new Error(`BC-R23 requires main; received ${options.branch || 'empty'}`)
+    if (Boolean(options.previewBranch) !== Boolean(options.previewSha)) {
+      throw new Error('Preview proof requires both --expected-preview-branch and --expected-preview-sha')
+    }
+    if (options.previewBranch === options.branch) {
+      throw new Error('Preview proof branch must not be main')
+    }
     if (!Number.isInteger(options.waitSeconds) || options.waitSeconds < 0 || options.waitSeconds > 1800) {
       throw new Error('--wait-seconds must be between 0 and 1800')
     }
@@ -635,8 +772,12 @@ async function runCli() {
   console.log(`BestCode production source audit: ${conclusion}`)
   console.log(`Evidence: ${destination}`)
   for (const worker of evidence.workers ?? []) {
-    console.log(`${worker.name}: trigger=${worker.trigger_policy.ok ? 'ok' : 'failed'} active=${worker.release?.state ?? 'unknown'}`)
-    for (const item of [...(worker.trigger_policy.violations ?? []), ...(worker.release?.violations ?? [])]) {
+    console.log(`${worker.name}: trigger=${worker.trigger_policy.ok ? 'ok' : 'failed'} active=${worker.release?.state ?? 'unknown'} preview=${worker.preview_probe?.state ?? 'not-requested'}`)
+    for (const item of [
+      ...(worker.trigger_policy.violations ?? []),
+      ...(worker.release?.violations ?? []),
+      ...(worker.preview_probe?.violations ?? []),
+    ]) {
       console.error(`${item.code}: ${item.message}`)
     }
   }

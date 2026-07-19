@@ -97,6 +97,16 @@ traffic зэрэг integrity incident-ийг retry хийхгүй шууд failu
 санитизац хийсэн JSON evidence `release-integrity-<run-id>` artifact болж 30 хоног
 хадгалагдана.
 
+`agent/source-lock-probe-*` branch нь зориудын non-main isolation rehearsal-д
+зориулагдана. Тэр branch push хийхэд тусдаа job:
+
+- хоёр Worker-ийн exact branch/SHA preview build олдсоныг;
+- deploy command нь `wrangler versions upload` байсныг;
+- тэр хугацаанд production active deployment одоогийн `main` SHA дээр 100% хэвээр
+  үлдсэнийг нэг evidence record-д холбоно.
+
+Probe branch-ийг production code-д merge хийхгүй; evidence гарсны дараа устгана.
+
 Exact preview filter (`*` include, `main` exclude), expected repository/root таарсан мөртөө
 production `wrangler deploy` command-тай trigger илэрвэл workflow command-ийг
 `wrangler versions upload` болгон guarded auto-repair хийнэ. Өөр branch filter,

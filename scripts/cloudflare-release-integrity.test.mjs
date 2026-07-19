@@ -4,6 +4,7 @@ import test from 'node:test'
 import {
   auditCloudflareProduction,
   assessActiveDeployment,
+  assessPreviewBuild,
   assessTriggerPolicy,
   classifyDeployCommand,
   planPreviewTriggerRepairs,
@@ -170,6 +171,31 @@ test('retries stale main but immediately blocks an active non-main branch', () =
   assert.ok(preview.violations.some((item) => item.code === 'BC-R23-ACTIVE-BRANCH-MISMATCH'))
 })
 
+test('preview proof requires the exact branch SHA to use versions upload', () => {
+  const previewExpected = {
+    ...expected,
+    preview_branch: 'agent/source-lock-probe-1',
+    preview_sha: 'c'.repeat(40),
+  }
+  const rawBuild = {
+    build_outcome: 'success',
+    build_trigger_metadata: {
+      branch: previewExpected.preview_branch,
+      commit_hash: previewExpected.preview_sha,
+      deploy_command: 'npx wrangler versions upload',
+    },
+    trigger: { root_directory: 'frontend', repo_connection: repository },
+  }
+
+  assert.equal(assessPreviewBuild(rawBuild, previewExpected).state, 'verified_preview_only')
+  const unsafe = assessPreviewBuild({
+    ...rawBuild,
+    build_trigger_metadata: { ...rawBuild.build_trigger_metadata, deploy_command: 'npx wrangler deploy' },
+  }, previewExpected)
+  assert.equal(unsafe.state, 'preview_isolation_failed')
+  assert.ok(unsafe.violations.some((item) => item.code === 'BC-R23-PREVIEW-DEPLOYED'))
+})
+
 test('trigger evidence omits build token and environment values', () => {
   const sanitized = sanitizeTrigger({
     trigger_uuid: 'safe-id',
@@ -332,4 +358,80 @@ test('guarded repair patches an unsafe exact preview trigger before auditing', a
   assert.equal(evidence.repairs[0].trigger_uuid, 'preview')
   assert.equal(evidence.workers[0].trigger_policy.ok, true)
   assert.equal(requests.filter((request) => request.method === 'PATCH').length, 1)
+})
+
+test('isolation proof links a successful preview upload while main stays active', async () => {
+  const previewBranch = 'agent/source-lock-probe-1'
+  const previewSha = 'd'.repeat(40)
+  const fetchImpl = async (url) => {
+    let result
+    if (url.endsWith('/workers/scripts')) {
+      result = [{ id: expected.name, tag: 'worker-tag' }]
+    } else if (url.endsWith('/builds/workers/worker-tag/triggers')) {
+      result = [
+        {
+          trigger_uuid: 'production',
+          branch_includes: ['main'],
+          branch_excludes: [],
+          deploy_command: 'npx wrangler deploy',
+          root_directory: 'frontend',
+          repo_connection: repository,
+        },
+        {
+          trigger_uuid: 'preview',
+          branch_includes: ['*'],
+          branch_excludes: ['main'],
+          deploy_command: 'npx wrangler versions upload',
+          root_directory: 'frontend',
+          repo_connection: repository,
+        },
+      ]
+    } else if (url.endsWith(`/workers/scripts/${expected.name}/deployments`)) {
+      result = { deployments: [{ id: 'deployment-id', versions: [{ version_id: 'main-version', percentage: 100 }] }] }
+    } else if (url.endsWith('/builds/builds?version_ids=main-version')) {
+      result = { builds: { 'main-version': {
+        build_outcome: 'success',
+        build_trigger_metadata: {
+          branch: 'main',
+          commit_hash: expected.sha,
+          deploy_command: 'npx wrangler deploy',
+        },
+        trigger: { root_directory: 'frontend', repo_connection: repository },
+      } } }
+    } else if (url.endsWith('/builds/workers/worker-tag/builds')) {
+      result = [{
+        build_outcome: 'success',
+        build_trigger_metadata: {
+          branch: previewBranch,
+          commit_hash: previewSha,
+          deploy_command: 'npx wrangler versions upload',
+        },
+        trigger: { root_directory: 'frontend', repo_connection: repository },
+      }]
+    } else {
+      throw new Error(`Unexpected request: ${url}`)
+    }
+    return new Response(JSON.stringify({ success: true, result }), { status: 200 })
+  }
+
+  const evidence = await auditCloudflareProduction({
+    accountId: 'account-id',
+    token: 'private-api-token',
+    repository: expected.repository,
+    branch: expected.branch,
+    sha: expected.sha,
+    previewBranch,
+    previewSha,
+    workers: [{ name: expected.name, root_directory: expected.root_directory }],
+    repairPreviewTriggers: false,
+    waitSeconds: 0,
+    pollSeconds: 5,
+    runId: 'probe-run',
+    fetchImpl,
+  })
+
+  assert.equal(evidence.execution.conclusion, 'success')
+  assert.equal(evidence.scope.preview_probe.branch, previewBranch)
+  assert.equal(evidence.workers[0].release.state, 'verified_main')
+  assert.equal(evidence.workers[0].preview_probe.state, 'verified_preview_only')
 })
