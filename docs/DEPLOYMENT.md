@@ -1,5 +1,9 @@
 # BestCode production deployment
 
+> **P0 integrity notice (2026-07-19):** Cloudflare Git integration for the installed `best-code-ide-appl` PWA activated a non-main PR branch deployment before merge. The manual `deploy.yml` flow below is therefore not the only effective deployment path. Until Phase 2.1 source-lock controls are verified, every release must confirm active branch/SHA and non-main builds must be treated as potentially unsafe for production traffic.
+
+Master v2 rule `BC-R23`: non-main branch deployment must never receive production traffic. Required remediation and exit evidence are in `docs/ROADMAP.md` Phase 2.1A and `docs/EVIDENCE_STANDARD.md` Release evidence.
+
 ## Architecture
 
 ```text
@@ -61,6 +65,8 @@ Frontend Worker name comes from `frontend/wrangler.toml`:
 ```text
 best-code-ide-app
 ```
+
+The installed PWA currently observed at `best-code-ide-appl.enkhbat194.workers.dev` is a separate Git-integrated Cloudflare application. Do not assume deploying `best-code-ide-app` updates the installed `-appl` PWA. Phase 2.1 must choose one canonical production destination and make branch/source restrictions explicit.
 
 Verify these names in Cloudflare before the first production deployment. Deployment status is taken from the actual GitHub Actions run; missing secrets or Cloudflare failures are returned as real failures.
 

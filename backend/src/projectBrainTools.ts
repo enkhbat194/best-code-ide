@@ -17,8 +17,13 @@ const DEFAULT_MEMORY_PATHS = [
   'docs/PROJECT_STATUS.md',
   'docs/ARCHITECTURE.md',
   'docs/ROADMAP.md',
+  'docs/RESEARCH_POLICY.md',
+  'docs/EVIDENCE_STANDARD.md',
+  'docs/THREAT_MODEL.md',
+  'docs/PRODUCT_BENCHMARK.md',
   'docs/DECISIONS/README.md',
   'docs/DECISIONS/0001-project-brain-and-ai-roles.md',
+  'docs/DECISIONS/0002-personal-creation-os.md',
   'README.md',
 ]
 
@@ -267,8 +272,13 @@ function boundedInteger(value: unknown, fallback: number, min: number, max: numb
 }
 
 function memoryPaths(project: ProjectConfig): string[] {
-  const configured = project.memoryPaths?.length ? project.memoryPaths : DEFAULT_MEMORY_PATHS
-  return [...new Set(configured
+  const configured = project.memoryPaths?.length ? project.memoryPaths : []
+  // BestCode's locked operating documents must remain in its canonical context
+  // even when an older PROJECTS_JSON secret still carries the v1 memory list.
+  const candidates = project.id === 'bestcode'
+    ? [...DEFAULT_MEMORY_PATHS, ...configured]
+    : (configured.length ? configured : DEFAULT_MEMORY_PATHS)
+  return [...new Set(candidates
     .map((path) => path.trim().replace(/^\/+/, ''))
     .filter((path) => path && !path.split('/').some((part) => part === '.' || part === '..')))]
     .slice(0, 20)

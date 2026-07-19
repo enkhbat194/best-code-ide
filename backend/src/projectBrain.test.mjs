@@ -114,10 +114,17 @@ test('canonical memory search returns bounded line-numbered evidence', () => {
 test('Project Brain shares canonical context, durable tasks, and handoffs', async (t) => {
   const { env } = createHarness()
   installGithubFiles(t, {
-    'BESTCODE_MASTER.md': '# Locked Master\nChatGPT, Claude, and DeepSeek use one Project Brain.',
-    'docs/PROJECT_STATUS.md': '# Status\nPhase 2 is current.',
-    'docs/ARCHITECTURE.md': '# Architecture\nProvider-neutral controller.',
-    'docs/ROADMAP.md': '# Roadmap\nProject Brain v1.',
+    'BESTCODE_MASTER.md': '# Locked Master v2\nBestCode is a provider-neutral Personal Creation OS.',
+    'docs/PROJECT_STATUS.md': '# Status\nProject Brain v1 is live; Production Integrity is next.',
+    'docs/ARCHITECTURE.md': '# Architecture\nMission, policy, evidence, and execution layers.',
+    'docs/ROADMAP.md': '# Roadmap\nProject Brain v1 is complete.',
+    'docs/RESEARCH_POLICY.md': '# Research Policy\nSources become claims and evidence.',
+    'docs/EVIDENCE_STANDARD.md': '# Evidence Standard\nAI prose is not machine evidence.',
+    'docs/THREAT_MODEL.md': '# Threat Model\nNon-main production traffic is forbidden.',
+    'docs/PRODUCT_BENCHMARK.md': '# Benchmark\nBestCode compounds owner assets.',
+    'docs/DECISIONS/README.md': '# Decisions',
+    'docs/DECISIONS/0001-project-brain-and-ai-roles.md': '# BC-001..BC-007',
+    'docs/DECISIONS/0002-personal-creation-os.md': '# BC-008..BC-020',
     'README.md': '# BestCode',
   })
 
@@ -185,11 +192,42 @@ test('Project Brain shares canonical context, durable tasks, and handoffs', asyn
   )
   assert.equal(context.structuredContent.ok, true)
   assert.equal(context.structuredContent.result.context_version, 'project-brain-v1')
-  assert.equal(context.structuredContent.result.canonical_documents.length, 5)
+  assert.equal(context.structuredContent.result.canonical_documents.length, 12)
   assert.equal(context.structuredContent.result.project_tasks.length, 1)
   assert.equal(context.structuredContent.result.handoffs.length, 1)
   assert.equal(context.structuredContent.result.project_tasks[0].verification, 'reported_metadata')
   assert.deepEqual(context.structuredContent.result.source_priority.slice(0, 2), ['github_main', 'production_deployment'])
+})
+
+test('BestCode v2 canonical documents extend an older configured memory list', async (t) => {
+  const { env } = createHarness()
+  env.PROJECTS_JSON = JSON.stringify([
+    {
+      id: 'bestcode',
+      name: 'BestCode PWA',
+      owner: 'enkhbat194',
+      repo: 'best-code-ide',
+      defaultBranch: 'main',
+      memoryPaths: ['BESTCODE_MASTER.md'],
+    },
+  ])
+  installGithubFiles(t, {
+    'BESTCODE_MASTER.md': '# Master v2',
+    'docs/RESEARCH_POLICY.md': '# Research Policy',
+  })
+
+  const context = await executeProjectBrainMcpTool(
+    'project_context_get',
+    { project_id: 'bestcode' },
+    'test-github-token',
+    env,
+  )
+
+  assert.equal(context.structuredContent.ok, true)
+  assert.deepEqual(
+    context.structuredContent.result.canonical_documents.map((document) => document.path),
+    ['BESTCODE_MASTER.md', 'docs/RESEARCH_POLICY.md'],
+  )
 })
 
 test('canonical Project Brain file changes are always high risk', async (t) => {
