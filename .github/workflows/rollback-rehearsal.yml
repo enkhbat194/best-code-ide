@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - agent/rollback-rehearsal-approved-20260719-1
   workflow_dispatch:
     inputs:
       mode:
@@ -52,7 +53,7 @@ env:
 jobs:
   plan:
     name: Plan ${{ matrix.worker }} rollback
-    if: ${{ github.event_name == 'push' || github.event.inputs.mode == 'plan' }}
+    if: ${{ github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'plan') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: production
@@ -127,5 +128,53 @@ jobs:
         with:
           name: rollback-rehearsal-${{ github.event.inputs.worker }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/rollback-rehearsal-${{ github.event.inputs.worker }}.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  approved-rehearsal:
+    name: Run owner-approved backend and PWA rehearsal
+    if: ${{ github.ref == 'refs/heads/agent/rollback-rehearsal-approved-20260719-1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Test rollback safety contract
+        run: node --test scripts/cloudflare-release-integrity.test.mjs scripts/cloudflare-rollback-controller.test.mjs
+      - name: Rehearse backend rollback and restore
+        run: >-
+          node scripts/cloudflare-rollback-controller.mjs
+          --mode rehearse
+          --worker best-code-ide
+          --repository "$GITHUB_REPOSITORY"
+          --expected-main-sha 86cd1cb884b65f05c1557b4553a251169f454dd3
+          --target-version-id c1adc845-1015-4d25-b77a-5803788853b8
+          --target-commit-sha bf76487c8ed7e3bfad8cd6131a5d16587af65c8a
+          --confirmation REHEARSE_ROLLBACK
+          --wait-seconds 0
+          --poll-seconds 20
+          --output artifacts/rollback-rehearsal-best-code-ide.json
+      - name: Rehearse installed PWA rollback and restore
+        run: >-
+          node scripts/cloudflare-rollback-controller.mjs
+          --mode rehearse
+          --worker best-code-ide-appl
+          --repository "$GITHUB_REPOSITORY"
+          --expected-main-sha 86cd1cb884b65f05c1557b4553a251169f454dd3
+          --target-version-id 9a6874a0-0080-4533-a68a-8f34145e88d9
+          --target-commit-sha bf76487c8ed7e3bfad8cd6131a5d16587af65c8a
+          --confirmation REHEARSE_ROLLBACK
+          --wait-seconds 0
+          --poll-seconds 20
+          --output artifacts/rollback-rehearsal-best-code-ide-appl.json
+      - name: Upload immutable owner-approved rehearsal evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rollback-rehearsal-approved-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/rollback-rehearsal-*.json
           if-no-files-found: warn
           retention-days: 30
