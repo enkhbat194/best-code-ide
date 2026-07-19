@@ -92,7 +92,7 @@ UI дээр terminal approval state-ийг зөв тусгах хэрэгтэй.
 
 **Exit evidence:** agent branch зориудаар deploy trigger хийсэн ч production active SHA өөрчлөгдөхгүй; main release болон rollback test ногоон.
 
-**Current package progress:** `main`-only workflow guard, backend `/api/release` contract, embedded PWA branch/SHA/build metadata, Worker version binding, owner-facing integrity card, release policy tests. Production trigger audit, active deployment proof, mismatch auto-rollback, rollback rehearsal remain open.
+**Current package progress:** PR #13 merged and production deployed. `main`-only workflow guard, backend `/api/release` contract, embedded PWA branch/SHA/build metadata, Worker version binding, owner-facing integrity card, release policy tests, public backend/PWA/service-worker smoke are green. Production trigger configuration audit, non-main isolation proof, mismatch auto-rollback, rollback rehearsal remain open.
 
 ### Work package 2.1B — Approval/idempotency fix
 
