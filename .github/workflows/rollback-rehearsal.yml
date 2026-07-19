@@ -135,7 +135,7 @@ jobs:
 
   approved-rehearsal:
     name: Run owner-approved backend and PWA rehearsal
-    if: ${{ github.ref == 'refs/heads/agent/rollback-rehearsal-approved-20260719-1' && github.event.head_commit.message != 'Publish previous rollback rehearsal outcome' }}
+    if: ${{ github.ref == 'refs/heads/agent/rollback-rehearsal-approved-20260719-1' && github.event.head_commit.message == 'Run owner-approved rollback rehearsal' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: production
@@ -193,5 +193,52 @@ jobs:
           node-version: 22
       - name: Publish exact previous rehearsal run as a commit status
         env:
-          EXPECTED_REHEARSAL_SHA: 103f73efb0a1e88ec259db19425c02dd5a2b3a68
+          EXPECTED_WORKFLOW_SHA: 103f73efb0a1e88ec259db19425c02dd5a2b3a68
+          STATUS_CONTEXT: BestCode/Rollback Rehearsal Evidence
+          STATUS_LABEL: rollback rehearsal
+          WORKFLOW_BRANCH: agent/rollback-rehearsal-approved-20260719-1
+          WORKFLOW_FILE: rollback-rehearsal.yml
+        run: node scripts/github-workflow-status-bridge.mjs
+
+  publish-main-release-status:
+    name: Publish exact main release workflow outcomes
+    if: ${{ github.ref == 'refs/heads/agent/rollback-rehearsal-approved-20260719-1' && github.event.head_commit.message == 'Publish main release outcome' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Publish main Release Integrity outcome
+        env:
+          EXPECTED_WORKFLOW_SHA: d8f7dd4b2634be5b389c2072acf9329d2ba3555e
+          STATUS_CONTEXT: BestCode/Main Release Integrity
+          STATUS_LABEL: release integrity
+          WORKFLOW_BRANCH: main
+          WORKFLOW_FILE: release-integrity.yml
+        run: node scripts/github-workflow-status-bridge.mjs
+      - name: Publish main rollback plan outcome
+        env:
+          EXPECTED_WORKFLOW_SHA: d8f7dd4b2634be5b389c2072acf9329d2ba3555e
+          STATUS_CONTEXT: BestCode/Main Rollback Plan
+          STATUS_LABEL: rollback plan
+          WORKFLOW_BRANCH: main
+          WORKFLOW_FILE: rollback-rehearsal.yml
+        run: node scripts/github-workflow-status-bridge.mjs
+      - name: Publish main Test outcome
+        env:
+          EXPECTED_WORKFLOW_SHA: d8f7dd4b2634be5b389c2072acf9329d2ba3555e
+          STATUS_CONTEXT: BestCode/Main Test
+          STATUS_LABEL: test
+          WORKFLOW_BRANCH: main
+          WORKFLOW_FILE: test.yml
+        run: node scripts/github-workflow-status-bridge.mjs
+      - name: Publish main Validate outcome
+        env:
+          EXPECTED_WORKFLOW_SHA: d8f7dd4b2634be5b389c2072acf9329d2ba3555e
+          STATUS_CONTEXT: BestCode/Main Validate
+          STATUS_LABEL: validate
+          WORKFLOW_BRANCH: main
+          WORKFLOW_FILE: validate.yml
         run: node scripts/github-workflow-status-bridge.mjs

@@ -41,22 +41,29 @@ export function statusState(conclusion) {
 async function main() {
   const token = required('GITHUB_TOKEN')
   const repository = required('GITHUB_REPOSITORY')
-  const branch = required('GITHUB_REF_NAME')
   const currentSha = required('GITHUB_SHA')
-  const expectedSha = required('EXPECTED_REHEARSAL_SHA')
+  const expectedSha = required('EXPECTED_WORKFLOW_SHA')
+  const branch = required('WORKFLOW_BRANCH')
+  const workflow = required('WORKFLOW_FILE')
+  const context = required('STATUS_CONTEXT')
+  const label = required('STATUS_LABEL')
   const base = `https://api.github.com/repos/${repository}`
   const query = new URLSearchParams({ branch, event: 'push', per_page: '20' })
-  const runs = await request(`${base}/actions/workflows/rollback-rehearsal.yml/runs?${query}`, token)
-  const run = selectExpectedRun(runs?.workflow_runs, expectedSha)
-  if (!run) throw new Error(`Completed rollback rehearsal run not found for ${expectedSha}`)
+  let run = null
+  for (let attempt = 0; attempt < 40 && !run; attempt += 1) {
+    const runs = await request(`${base}/actions/workflows/${encodeURIComponent(workflow)}/runs?${query}`, token)
+    run = selectExpectedRun(runs?.workflow_runs, expectedSha)
+    if (!run) await new Promise((resolve) => setTimeout(resolve, 15_000))
+  }
+  if (!run) throw new Error(`Completed ${workflow} push run not found for ${expectedSha}`)
 
   const state = statusState(run.conclusion)
-  const description = `rollback rehearsal ${run.id}: ${safeText(run.conclusion || run.status, 40)}`.slice(0, 140)
+  const description = `${label} ${run.id}: ${safeText(run.conclusion || run.status, 40)}`.slice(0, 140)
   await request(`${base}/statuses/${currentSha}`, token, {
     method: 'POST',
     body: JSON.stringify({
       state,
-      context: 'BestCode/Rollback Rehearsal Evidence',
+      context,
       description,
       target_url: run.html_url,
     }),
