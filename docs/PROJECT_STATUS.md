@@ -8,18 +8,21 @@ Canonical plan: `/BESTCODE_MASTER.md` v2.0.0 (`LOCKED`)
 
 - Repository: `enkhbat194/best-code-ide`
 - Default branch: `main`
-- Verified active `main`: `5be5d7d5ceb20b5de7c51a6a2d8a98b45744cdf3`
-- Release PR: `https://github.com/enkhbat194/best-code-ide/pull/13`
+- Dynamic Git truth: GitHub-ийн одоогийн `main` HEAD
+- Runtime release truth: PWA `Settings → Release & Integrity` (`/api/release`)
 - Backend: `https://best-code-ide.enkhbat194.workers.dev`
-- Backend health build: `master-v2-integrity-v1`
-- Backend Worker version: `2708809d-e2ae-425f-a490-b0f74837b664`
+- Backend health contract: `/health` нь build болон Worker version metadata-г runtime дээр буцаана
 - Installed PWA: `https://best-code-ide-appl.enkhbat194.workers.dev`
-- Installed PWA asset: `index-BRu5vTi5.js`
-- Embedded PWA source: `main` at `5be5d7d5ceb20b5de7c51a6a2d8a98b45744cdf3`
-- PWA Cloudflare build ID: `7b782967-11df-469d-9549-26d697ad0f0a`
+- PWA build contract: branch, commit SHA, Cloudflare build ID/time-г bundle-д embed хийнэ
+- PWA update contract: service worker `skipWaiting` + `clientsClaim` ашиглан шинэ asset-ийг идэвхжүүлнэ
 - Manual frontend target: `https://best-code-ide-app.enkhbat194.workers.dev`
 
-AI/chat claim нь дээрх GitHub/deployment evidence-ийг орлохгүй.
+Exact active SHA, Worker version, asset name, build ID-г энэ Git файлд “current” гэж
+хадгалахгүй. Учир нь файлыг шинэчилсэн commit өөрөө `main` SHA болон deployment
+identifier-уудыг дахин өөрчилнө. Current төлөвийг дээрх runtime UI/endpoint-оос
+уншина; доорх exact identifier-ууд зөвхөн immutable historical release event байна.
+
+AI/chat claim нь GitHub/runtime deployment evidence-ийг орлохгүй.
 
 ## 2. Completed
 
@@ -78,7 +81,7 @@ Released implementation:
 - Settings дээр production/preview/stale/unverified release card;
 - exact `main` SHA policy tests.
 
-Release evidence:
+PR #13 merge үеийн historical release evidence:
 
 - PR Test ба Validate workflows success;
 - backend 26/26 tests + typecheck green;
@@ -88,6 +91,11 @@ Release evidence:
 - public PWA bundle `main` merge SHA-г embed хийсэн;
 - service worker шинэ JS/CSS asset-ийг precache хийж `skipWaiting` + `clientsClaim` идэвхжүүлсэн;
 - public browser smoke Settings release card, `main · 5be5d7d5`, build metadata-г render хийснийг баталсан.
+
+PR #14 release evidence record-ийг шинэчилж, installed PWA-ийн service-worker reload
+cycle шинэ `main`-ийг авсныг баталсан. Мөн Git дотор content-addressed identifier-ийг
+“current” гэж хуулан хадгалах нь commit бүрийн дараа өөрийгөө хуучруулдаг гэдгийг
+илрүүлсэн; энэ файл одоо immutable event ба dynamic runtime truth-ийг тусгаарлана.
 
 Үлдсэн: actual Cloudflare trigger configuration audit, preview/production isolation proof, mismatch auto-rollback, rollback rehearsal.
 

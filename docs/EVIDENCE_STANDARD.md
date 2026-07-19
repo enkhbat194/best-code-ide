@@ -206,6 +206,22 @@ Cloud provider “deployment created” гэсэн нь production active бол
 
 Non-main branch production traffic авсан бол severity-high integrity incident нээнэ, traffic-ийг previous-good main руу буцааж, integration rule засагдах хүртэл release pause хийнэ.
 
+### 9.1 Dynamic truth ба immutable history
+
+Release evidence хоёр өөр үүрэгтэй байна:
+
+- **Dynamic runtime truth** — одоогийн GitHub `main` HEAD, active deployment version,
+  traffic, PWA asset/build ID-г API, provider metadata, Release & Integrity UI-аас
+  тухайн мөчид query хийж авна.
+- **Immutable historical event** — тодорхой PR/commit/build/deployment/smoke-ийн exact
+  identifier, timestamp, checksum-ийг append-only evidence record-д хадгална.
+
+Git-д хадгалсан status document өөрийнхөө одоогийн commit SHA-г “current” гэж claim
+хийж болохгүй: уг document-ийг commit хийх үйлдэл SHA-г өөрчилж, claim-ийг шууд
+хуучруулна. Ийм self-referential identifier нь runtime query эсвэл CI-аас гаргасан
+immutable external evidence record байна. Historical release identifier-ийг тухайн
+event-ийн нэр, огноо, scope-той нь хадгалж болно.
+
 ## 10. Research evidence
 
 Research conclusion бүр:
