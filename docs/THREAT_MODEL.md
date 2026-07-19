@@ -173,8 +173,8 @@ Trust boundary бүрт identity, capability, validation, audit, timeout, data c
 
 Production feature workээс өмнө:
 
-- [ ] non-main production traffic техникийн түвшинд блоклогдсон;
-- [ ] active deployment SHA/source evidence endpoint байна;
+- [x] non-main production traffic техникийн түвшинд блоклогдсон;
+- [x] active deployment SHA/source evidence endpoint байна;
 - [ ] shared token rotation хийж болох runbook ба leak-free logs;
 - [ ] rate limit + request size/time limit;
 - [ ] idempotency/replay protection critical operation-д;
@@ -183,7 +183,7 @@ Production feature workээс өмнө:
 - [ ] evidence record v1 + redaction fixtures;
 - [ ] threat/conformance test CI-д;
 - [ ] current CORS/origin allowlist reviewed;
-- [ ] incident response ба previous-good rollback drill.
+- [x] incident response ба previous-good rollback drill.
 
 Research Agent enable хийхээс өмнө T2/T7/T13; remote runner enable хийхээс өмнө T6/T9/T10/T13; Personal Brain enable хийхээс өмнө T11/T16/T18 gate заавал ногоон байна.
 
@@ -192,7 +192,8 @@ Research Agent enable хийхээс өмнө T2/T7/T13; remote runner enable х
 Одоогийн single-owner foundation-д түр хүлээн зөвшөөрч буй эрсдэл:
 
 - shared Bearer token per-client identity биш;
-- production integration branch restriction бүрэн нотлогдоогүй;
+- production source lock болон rollback drill нотлогдсон ч GitHub/Cloudflare provider
+  availability ба continuous audit ажиллагаанаас хамаарна;
 - audit/evidence schema v1 хараахан хэрэгжээгүй;
 - PWA token device security нь browser/PWA storage-аас хамаарна;
 - no remote runner/browser research yet, тиймээс тэдгээрийн risk latent.

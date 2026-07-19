@@ -80,7 +80,7 @@ UI дээр terminal approval state-ийг зөв тусгах хэрэгтэй.
 
 “Миний approve хийгээгүй branch production болохгүй. Яг ямар version ажиллаж байгааг харж, алдаа гарвал буцааж чадна.”
 
-### Work package 2.1A — Deployment source lock
+### Work package 2.1A — Deployment source lock — COMPLETED
 
 - Cloudflare Git integration-ийн production branch rule-ийг audit;
 - `main`-ээс бусдыг preview-only environment/hostname болгох;
@@ -92,7 +92,7 @@ UI дээр terminal approval state-ийг зөв тусгах хэрэгтэй.
 
 **Exit evidence:** agent branch зориудаар deploy trigger хийсэн ч production active SHA өөрчлөгдөхгүй; main release болон rollback test ногоон.
 
-**Current package progress:** PR #13 merged and production deployed. `main`-only workflow guard, backend `/api/release` contract, embedded PWA branch/SHA/build metadata, Worker version binding, owner-facing integrity card, release policy tests, public backend/PWA/service-worker smoke are green. PR #16 adds the Cloudflare trigger/active-version auditor, exact branch/SHA/traffic tests, post-main evidence artifact, and canonical installed-PWA target. Its first live run proved the backend preview trigger could deploy to production; run `29677501043` then repaired the trigger and verified both Workers on exact `main` at 100% traffic. Run `29677894804` deliberately pushed non-main probe `435535ca...`, proved both builds were preview-only uploads, and proved both production Workers remained on `main` `bf76487c...` at 100%. Previous-good rollback planning and owner-approved rollback/restore rehearsal are the remaining exit requirements.
+**Completion evidence:** PR #13 delivered the `main`-only workflow guard, `/api/release`, embedded PWA branch/SHA/build metadata, Worker version binding, owner-facing integrity card, release policy tests, and public smoke. PR #16 added provider-level trigger/active-version auditing and guarded repair. Run `29677501043` repaired the unsafe backend preview trigger and verified both Workers on exact `main` at 100% traffic. Run `29677894804` deliberately pushed non-main probe `435535ca...`; both builds were preview-only uploads and production remained on `main` `bf76487c...` at 100%. PR #18 added exact previous-good planning and the fail-safe rollback controller. Owner-approved run `29683440382` then activated and smoked the exact previous-good backend and PWA versions, restored both exact current versions, and passed restore smoke. Immutable artifact `rollback-rehearsal-approved-29683440382-1` has digest `sha256:9139cd1b05a47dfedf674e383126a5cf45508395178f6535a2c2e1566981892f`. Package exit evidence is complete.
 
 ### Work package 2.1B — Approval/idempotency fix
 

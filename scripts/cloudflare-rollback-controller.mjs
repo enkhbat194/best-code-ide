@@ -182,7 +182,20 @@ export async function rehearseRollback({ current, candidate, deploy, poll, smoke
   }
 }
 
-async function apiRequest(url, { token, fetchImpl, method = 'GET', body }) {
+function apiFailureMessage(data) {
+  if (!Array.isArray(data?.errors)) return ''
+  return data.errors
+    .map((item) => {
+      const code = Number.isFinite(Number(item?.code)) ? `code ${Number(item.code)}` : ''
+      const message = text(item?.message, 240)
+      return [code, message].filter(Boolean).join(': ')
+    })
+    .filter(Boolean)
+    .join('; ')
+    .slice(0, 500)
+}
+
+export async function apiRequest(url, { token, fetchImpl, method = 'GET', body }) {
   const response = await fetchImpl(url, {
     method,
     headers: {
@@ -199,7 +212,10 @@ async function apiRequest(url, { token, fetchImpl, method = 'GET', body }) {
   } catch {
     throw new Error(`API ${response.status}: invalid JSON response`)
   }
-  if (!response.ok) throw new Error(`API ${response.status}: request failed`)
+  if (!response.ok) {
+    const detail = apiFailureMessage(data)
+    throw new Error(`API ${response.status}: ${detail || 'request failed'}`)
+  }
   return data
 }
 
@@ -257,9 +273,9 @@ async function isAncestor(candidateSha, expectedMainSha, options) {
     && normalizeSha(result?.merge_base_commit?.sha) === candidateSha
 }
 
-async function createDeployment(worker, versionId, message, options) {
+export async function createDeployment(worker, versionId, message, options) {
   const result = await cloudflare(
-    `/accounts/${encodeURIComponent(options.accountId)}/workers/scripts/${encodeURIComponent(worker.name)}/deployments`,
+    `/accounts/${encodeURIComponent(options.accountId)}/workers/scripts/${encodeURIComponent(worker.name)}/deployments?force=true`,
     options,
     {
       method: 'POST',
@@ -268,7 +284,6 @@ async function createDeployment(worker, versionId, message, options) {
         versions: [{ percentage: 100, version_id: versionId }],
         annotations: {
           'workers/message': message,
-          'workers/triggered_by': 'bestcode-rollback-rehearsal',
         },
       },
     },
@@ -367,7 +382,7 @@ function baseEvidence(worker, options) {
       actor_type: 'ci',
       actor_id: 'github-actions',
       tool: 'scripts/cloudflare-rollback-controller.mjs',
-      tool_version: '1.0.0',
+      tool_version: '1.0.1',
     },
     scope: {
       repository: options.repository,
