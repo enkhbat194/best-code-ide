@@ -1,5 +1,11 @@
 # BestCode production deployment
 
+> **P0 integrity notice (2026-07-19):** Cloudflare Git integration showed a non-main PR branch version in deployment history before merge, but BestCode did not persist enough branch/SHA/traffic evidence to prove whether that version received production traffic. Cloudflare's documented default is preview upload for non-production branches. Until Phase 2.1 verifies the actual trigger configuration and active source, every release must confirm active branch/SHA instead of inferring it from version history.
+
+Master v2 rule `BC-R23`: non-main branch deployment must never receive production traffic. Required remediation and exit evidence are in `docs/ROADMAP.md` Phase 2.1A and `docs/EVIDENCE_STANDARD.md` Release evidence.
+
+Official current behavior: <https://developers.cloudflare.com/workers/ci-cd/builds/configuration/>.
+
 ## Architecture
 
 ```text
@@ -61,6 +67,8 @@ Frontend Worker name comes from `frontend/wrangler.toml`:
 ```text
 best-code-ide-app
 ```
+
+The installed PWA currently observed at `best-code-ide-appl.enkhbat194.workers.dev` is a separate Git-integrated Cloudflare application. Do not assume deploying `best-code-ide-app` updates the installed `-appl` PWA. Phase 2.1 must choose one canonical production destination and make branch/source restrictions explicit.
 
 Verify these names in Cloudflare before the first production deployment. Deployment status is taken from the actual GitHub Actions run; missing secrets or Cloudflare failures are returned as real failures.
 

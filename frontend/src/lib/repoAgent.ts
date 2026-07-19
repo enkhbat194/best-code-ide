@@ -23,6 +23,41 @@ interface ActionEnvelope<T> {
   error?: ActionError
 }
 
+export type ReleaseIntegrityStatus = 'verified_main' | 'stale_main' | 'preview_build' | 'unverified'
+
+export interface ReleaseIntegrity {
+  ok: true
+  checked_at: string
+  policy: {
+    master_version: string
+    rule: string
+    production_branch: string
+  }
+  integrity: {
+    status: ReleaseIntegrityStatus
+    production_ready: boolean
+    reason: string
+  }
+  client: {
+    branch: string | null
+    sha: string | null
+    build_id: string | null
+    environment: string | null
+  }
+  repository: {
+    full_name: string
+    default_branch: string
+    configured_branch: string
+    main_sha: string
+  }
+  backend: {
+    build: string
+    version_id: string | null
+    version_tag: string | null
+    created_at: string | null
+  }
+}
+
 interface ProjectListItem {
   id: string
   repository: string
@@ -285,4 +320,21 @@ export async function readRepositoryTaskLogs(taskId: string, offset = 0): Promis
 
 export async function cancelRepositoryTask(taskId: string): Promise<RepositoryTask> {
   return rawRequest<RepositoryTask>(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, { method: 'POST' })
+}
+
+export async function getReleaseIntegrity(client: {
+  branch: string
+  sha: string
+  buildId: string
+  environment: string
+}): Promise<ReleaseIntegrity> {
+  const projectId = await configuredProjectId()
+  const query = new URLSearchParams({
+    project_id: projectId,
+    client_branch: client.branch,
+    client_sha: client.sha,
+    client_build_id: client.buildId,
+    client_environment: client.environment,
+  })
+  return rawRequest<ReleaseIntegrity>(`/api/release?${query.toString()}`)
 }

@@ -9,6 +9,7 @@
 - Superseded record хуучин шалтгаан болон шинэ decision ID-г хадгална.
 - GitHub `main` дээр merge болоогүй record canonical биш.
 
-Current:
+Accepted:
 
 - `0001-project-brain-and-ai-roles.md` — Project Brain, source-of-truth болон AI-уудын үүрэг.
+- `0002-personal-creation-os.md` — Personal Creation OS, Second Brain, Asset Graph, Research/Evidence чиглэл.

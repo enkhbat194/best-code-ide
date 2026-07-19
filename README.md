@@ -1,20 +1,33 @@
-# BestCode PWA
+# BestCode — Personal Creation OS
 
-BestCode бол код мэдэхгүй хэрэглэгч ChatGPT эсвэл Claude-д энгийн хэлээр зорилгоо хэлээд repository-г уншуулах, working branch дээр засвар бэлтгүүлэх, шалгуулах, Preview хийх, PR/deployment хүртэл хүргэх mobile-first хөгжүүлэлтийн орчин.
+BestCode бол Enkhbat-д зориулсан private, mobile-first AI инженерчлэл ба бүтээлийн орчин. Хэрэглэгч утсаараа монголоор зорилгоо хэлэхэд BestCode судалгаа, төлөвлөгөө, бүтээл, шалгалт, approval, release болон дахин ашиглагдах asset хүртэлх урсгалыг нэг зорилго, нэг санах ой, нэг policy/evidence системээр удирдана.
+
+Одоогийн production foundation нь software/repository workflow дээр ажиллана. Web Research Agent, Second Brain v2, Asset Graph, semantic approval, remote runner болон real-world creation mode нь Master v2-ийн дараалсан **target** capability; production дээр байгаа мэтээр тайлагнахгүй.
 
 ```text
-ChatGPT Actions ─┐
-Claude MCP ──────┼─> BestCode Worker ─> Project Brain / GitHub / CI
-BestCode PWA ────┘          │
-       └─ DeepSeek ─────────┘  (local workspace ба diagnostics туслах)
+ChatGPT / Claude / DeepSeek / future AI roles
+                    │
+                    v
+BestCode PWA → Worker Policy/Evidence Gate → Project Brain / GitHub / CI
+                    │
+                    └─ Target: Mission / Research / Runner / Asset Graph
 ```
 
-- **ChatGPT, Claude** — үндсэн external coding agent байж болно.
-- **DeepSeek** — PWA доторх нэмэлт coding/diagnostics туслах.
-- **BestCode PWA** — workspace, Preview, diff, task, approval-ийн mobile интерфэйс.
-- **BestCode Worker** — бүх AI-д ижил project, security, task, approval, Git болон CI дүрэм хэрэгжүүлэх controller.
+- **AI provider-ууд** — Planner, Builder, Researcher, Reviewer зэрэг role авч болно; canonical state эзэмшихгүй.
+- **BestCode PWA** — owner-ийн Mission, workspace, Preview, evidence, approval, Asset-ийн mobile интерфэйс.
+- **BestCode Worker** — бүх AI-д ижил project, capability, security, task, approval, Git болон evidence дүрэм хэрэгжүүлэх controller.
+- **GitHub `main`** — software code/config-ийн эхний source of truth.
 
-Canonical зорилго, AI-уудын үүрэг болон ажлын хатуу дүрэм: [`BESTCODE_MASTER.md`](BESTCODE_MASTER.md).
+Canonical зорилго, AI role, Research/Asset чиглэл болон ажлын хатуу дүрэм: [`BESTCODE_MASTER.md`](BESTCODE_MASTER.md) v2.0.0.
+
+Implementation guides:
+
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) — detailed work packages and exit evidence;
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — current/target layered architecture;
+- [`docs/RESEARCH_POLICY.md`](docs/RESEARCH_POLICY.md) — safe web research and claim provenance;
+- [`docs/EVIDENCE_STANDARD.md`](docs/EVIDENCE_STANDARD.md) — evidence, semantic approval, rollback;
+- [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) — current-state threats and security gates;
+- [`docs/PRODUCT_BENCHMARK.md`](docs/PRODUCT_BENCHMARK.md) — Cursor/Replit/VS Code/Codex strategic benchmark.
 
 ## Одоогийн бүтэц
 
@@ -40,7 +53,8 @@ Canonical memory нь GitHub `main` дээр байна:
 - `docs/PROJECT_STATUS.md` — одоогийн бодит төлөв;
 - `docs/ARCHITECTURE.md` — системийн урсгал;
 - `docs/ROADMAP.md` — ажлын дараалал;
-- `docs/DECISIONS/` — шийдвэрийн хувилбарын түүх.
+- `docs/DECISIONS/` — шийдвэрийн хувилбарын түүх;
+- `docs/RESEARCH_POLICY.md`, `docs/EVIDENCE_STANDARD.md`, `docs/THREAT_MODEL.md` — түгжсэн operating contract.
 
 Dynamic memory нь Durable Object-д project тус бүрээр task, handoff, approval болон workflow evidence хадгална. Энэ metadata нь GitHub/CI/deployment-ийн нотолгоог орлохгүй.
 
@@ -196,8 +210,13 @@ ChatGPT owner/repo-г дур мэдэн ашиглахгүй. Зөвхөн `PROJ
       "docs/PROJECT_STATUS.md",
       "docs/ARCHITECTURE.md",
       "docs/ROADMAP.md",
+      "docs/RESEARCH_POLICY.md",
+      "docs/EVIDENCE_STANDARD.md",
+      "docs/THREAT_MODEL.md",
+      "docs/PRODUCT_BENCHMARK.md",
       "docs/DECISIONS/README.md",
       "docs/DECISIONS/0001-project-brain-and-ai-roles.md",
+      "docs/DECISIONS/0002-personal-creation-os.md",
       "README.md"
     ]
   },

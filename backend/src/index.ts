@@ -5,6 +5,7 @@ import { handleFilesCommit } from './files'
 import { handleLlm } from './llm'
 import { handleMcp } from './mcp'
 import { openapiSpec } from './openapi'
+import { handleRelease, healthPayload } from './release'
 import { handleRest } from './rest'
 import { handleTasks } from './tasks'
 import { handleWorkspaceExport } from './workspace'
@@ -55,7 +56,9 @@ export default {
     const url = new URL(req.url)
 
     if (url.pathname === '/health') {
-      return jsonResponse({ ok: true, build: 'project-brain-v1' })
+      const response = jsonResponse(healthPayload(env))
+      response.headers.set('Cache-Control', 'no-store')
+      return response
     }
 
     // Public schema discovery for ChatGPT Custom GPT Actions and REST clients.
@@ -77,6 +80,9 @@ export default {
 
     const taskResponse = await handleTasks(req, env, url)
     if (taskResponse) return taskResponse
+
+    const releaseResponse = await handleRelease(req, env, url)
+    if (releaseResponse) return releaseResponse
 
     if (url.pathname === '/api/llm' && req.method === 'POST') {
       return handleLlm(req, env)
