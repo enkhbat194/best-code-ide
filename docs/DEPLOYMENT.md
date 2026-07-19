@@ -32,8 +32,12 @@ Recommended Cloudflare API token permissions:
 
 ```text
 Account / Workers Scripts / Edit
-Account / Account Settings / Read
+Account / Workers Builds Configuration / Edit
 ```
+
+`Release Integrity` workflow нь token-ийг зөвхөн GitHub `production` environment-ээс
+уншина. Evidence artifact-д token, build environment variables, build-token UUID
+хадгалахгүй.
 
 The workflow uses the GitHub `production` environment. Add required reviewers to that environment when a second GitHub-side approval is desired.
 
@@ -62,13 +66,40 @@ Backend Worker name comes from `backend/wrangler.toml`:
 best-code-ide
 ```
 
-Frontend Worker name comes from `frontend/wrangler.toml`:
+Canonical installed PWA Worker name comes from `frontend/wrangler.toml`:
 
 ```text
-best-code-ide-app
+best-code-ide-appl
 ```
 
-The installed PWA currently observed at `best-code-ide-appl.enkhbat194.workers.dev` is a separate Git-integrated Cloudflare application. Do not assume deploying `best-code-ide-app` updates the installed `-appl` PWA. Phase 2.1 must choose one canonical production destination and make branch/source restrictions explicit.
+`best-code-ide-app` нь хуучин manual target. Шинэ workflow болон Wrangler config
+installed `best-code-ide-appl.enkhbat194.workers.dev` target-ийг canonical production
+frontend болгоно.
+
+## Automated production source audit
+
+`.github/workflows/release-integrity.yml` нь `main` push бүрийн дараа, зургаан цаг
+тутам, мөн owner manual dispatch хийхэд дараах contract-ийг шалгана:
+
+1. `best-code-ide` trigger root нь `backend`, `best-code-ide-appl` trigger root нь
+   `frontend` байна.
+2. Яг нэг production trigger `branch_includes: [main]`,
+   `branch_excludes: []`, explicit `wrangler deploy` байна.
+3. Optional preview trigger зөвхөн `branch_includes: ["*"]`,
+   `branch_excludes: [main]`, explicit `wrangler versions upload` байна.
+4. Active deployment яг нэг version-д 100% traffic өгсөн байна.
+5. Active version-ийн Workers Build metadata branch=`main`, commit SHA=`GITHUB_SHA`,
+   repository/root/deploy command contract-той таарна.
+
+Cloudflare build GitHub push-ээс хойш асинхрон дуусдаг тул audit хуучин `main` SHA-г
+15 минут хүртэл bounded poll хийнэ. Non-main active branch, unsafe trigger, split
+traffic зэрэг integrity incident-ийг retry хийхгүй шууд failure болгоно. Run бүрийн
+санитизац хийсэн JSON evidence `release-integrity-<run-id>` artifact болж 30 хоног
+хадгалагдана.
+
+Энэ шат read-only detector. Mismatch дээр production traffic-ийг автоматаар өөрчлөхгүй;
+exact previous-good version, binding compatibility, smoke evidence бүрдсэн rollback
+controller дараагийн тусдаа high-risk багц байна.
 
 Verify these names in Cloudflare before the first production deployment. Deployment status is taken from the actual GitHub Actions run; missing secrets or Cloudflare failures are returned as real failures.
 

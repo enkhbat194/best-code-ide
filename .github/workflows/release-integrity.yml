@@ -1,0 +1,51 @@
+name: Release Integrity
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 */6 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bestcode-production-source-audit
+  cancel-in-progress: true
+
+jobs:
+  production-source-lock:
+    name: Verify active production source
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      BESTCODE_PRODUCTION_WORKERS: >-
+        [{"name":"best-code-ide","root_directory":"backend"},{"name":"best-code-ide-appl","root_directory":"frontend"}]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Test source-lock policy
+        run: node --test scripts/cloudflare-release-integrity.test.mjs
+      - name: Audit Cloudflare triggers and active versions
+        run: >-
+          node scripts/cloudflare-release-integrity.mjs
+          --repository "$GITHUB_REPOSITORY"
+          --branch main
+          --expected-sha "$GITHUB_SHA"
+          --wait-seconds 900
+          --poll-seconds 20
+          --output artifacts/release-integrity.json
+      - name: Upload immutable release evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-integrity-${{ github.run_id }}
+          path: artifacts/release-integrity.json
+          if-no-files-found: warn
+          retention-days: 30

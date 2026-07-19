@@ -12,6 +12,16 @@ permissions:
   contents: read
 
 jobs:
+  release-policy-tests:
+    name: Production source-lock tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test scripts/cloudflare-release-integrity.test.mjs
+
   backend-tests:
     name: Backend unit tests
     runs-on: ubuntu-latest

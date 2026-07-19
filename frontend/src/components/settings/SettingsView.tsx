@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { GitBranch, RefreshCw, RotateCw, Server, ShieldAlert, ShieldCheck } from 'lucide-react'
+import { GitBranch, LockKeyhole, RefreshCw, RotateCw, Server, ShieldAlert, ShieldCheck } from 'lucide-react'
 import { getReleaseIntegrity, type ReleaseIntegrity, type ReleaseIntegrityStatus } from '../../lib/repoAgent'
 import { clientRelease, shortSha } from '../../lib/release'
 import { useSettingsStore } from '../../store/settingsStore'
@@ -92,6 +92,11 @@ export function SettingsView() {
             <GitBranch size={16} />
             <span>GitHub main</span>
             <strong>{shortSha(release?.repository.main_sha)}</strong>
+          </div>
+          <div className={styles.releaseRow}>
+            <LockKeyhole size={16} />
+            <span>Deploy policy</span>
+            <strong>{release ? `${release.policy.rule} · ${release.policy.production_branch} only` : 'шалгаагүй'}</strong>
           </div>
           <div className={styles.releaseRow}>
             <Server size={16} />
