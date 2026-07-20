@@ -27,12 +27,34 @@ async function buildPlan(env: Env, projectId: string) {
   const main = await gh.getBranch(token, project.owner, project.repo, project.defaultBranch)
   if (!main) throw new Error(`Default branch not found: ${project.defaultBranch}`)
 
+  const branchCache = new Map<string, gh.BranchInfo | null>([[project.defaultBranch, main]])
+  const currentBranch = async (branch: string): Promise<gh.BranchInfo | null> => {
+    if (branchCache.has(branch)) return branchCache.get(branch) ?? null
+    const value = await gh.getBranch(token, project.owner, project.repo, branch)
+    branchCache.set(branch, value)
+    return value
+  }
+
   const approvals = await listApprovals(env, { projectId, limit: 100 })
-  const staleApprovals = approvals.items.filter((operation) =>
-    !TERMINAL.has(operation.status) &&
-    operation.base_context_sha &&
-    operation.base_context_sha !== main.sha,
-  )
+  const staleApprovals = []
+  for (const operation of approvals.items) {
+    if (TERMINAL.has(operation.status) || !operation.base_context_sha) continue
+    const branchName = operation.branch || project.defaultBranch
+    const branch = await currentBranch(branchName)
+    if (!branch || branch.sha !== operation.base_context_sha) {
+      staleApprovals.push({
+        operation_id: operation.operation_id,
+        title: operation.title,
+        status: operation.status,
+        branch: branchName,
+        base_context_sha: operation.base_context_sha,
+        current_context_sha: branch?.sha,
+        stale_reason: branch
+          ? `branch ${branchName} changed from ${operation.base_context_sha} to ${branch.sha}`
+          : `branch ${branchName} no longer exists`,
+      })
+    }
+  }
 
   const branches = await gh.listBranches(token, project.owner, project.repo, 100)
   const mergedBranches = []
@@ -54,13 +76,7 @@ async function buildPlan(env: Env, projectId: string) {
     checked_at: new Date().toISOString(),
     project: { id: project.id, repository: `${project.owner}/${project.repo}`, default_branch: project.defaultBranch },
     current_main_sha: main.sha,
-    stale_approvals: staleApprovals.map((operation) => ({
-      operation_id: operation.operation_id,
-      title: operation.title,
-      status: operation.status,
-      branch: operation.branch,
-      base_context_sha: operation.base_context_sha,
-    })),
+    stale_approvals: staleApprovals,
     merged_branches: mergedBranches,
     counts: { stale_approvals: staleApprovals.length, merged_branches: mergedBranches.length },
   }
@@ -90,7 +106,7 @@ export async function handleMaintenance(req: Request, env: Env, url: URL): Promi
         items.push(await markSuperseded(
           env,
           operation.operation_id,
-          `MAINTENANCE_CONTEXT_STALE: approved context ${operation.base_context_sha} no longer matches main ${plan.current_main_sha}`,
+          `MAINTENANCE_CONTEXT_STALE: ${operation.stale_reason}`,
         ))
       }
       return jsonResponse({ ok: true, updated: items.length, operation_ids: items.map((item) => item.operation_id) })
