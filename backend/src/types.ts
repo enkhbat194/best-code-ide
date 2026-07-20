@@ -7,6 +7,10 @@ export interface Env {
   ENABLE_LEGACY_AGENT?: string
   ENABLE_LEGACY_REST_WRITES?: string
   REQUIRE_APPROVALS?: string
+  MAX_REQUEST_BYTES?: string
+  MAX_CHAT_REQUEST_BYTES?: string
+  MAX_FILE_REQUEST_BYTES?: string
+  MAX_WORKSPACE_REQUEST_BYTES?: string
   CF_VERSION_METADATA?: {
     id: string
     tag?: string
