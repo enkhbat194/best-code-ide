@@ -2,7 +2,7 @@
 
 Date: 2026-07-21
 
-Status: VERIFIED OWNER OBSERVATION
+Status: VERIFIED OWNER OBSERVATION; MAINTENANCE CLOSURE IMPLEMENTED
 
 ## Observed production state
 
@@ -21,12 +21,14 @@ Observed values:
 
 The installed application source and GitHub `main` matched exactly at observation time. The stale PWA cache incident was therefore recovered and the release-integrity owner observation required by Phase 2.1B passed.
 
-## Remaining operational closure gates
+## System Maintenance Center
 
-This observation does not by itself prove that old Durable Object approval operations were rewritten or that every merged branch reference was deleted. Phase 2.1B may be marked complete only after:
+This closure package adds an authenticated, SHA-pinned maintenance surface in Settings.
 
-1. operations pinned to obsolete context SHA `e86e22e...` are terminalized as `superseded` or otherwise proven non-executable;
-2. merged/superseded branch refs are deleted through the SHA-pinned branch-cleanup path;
-3. final repository status records the above evidence without claiming unobserved mutations.
+- stale pending/approved operations whose `base_context_sha` no longer matches current `main` can be terminalized as `superseded`;
+- only unprotected `agent/*` branches proven `behind` or `identical` with zero commits ahead of `main` are eligible for deletion;
+- both mutations require an exact confirmation literal and the exact planned `main` SHA;
+- branch deletion additionally rechecks every branch SHA immediately before deletion;
+- protected branches, `main`, `master`, changed branch SHAs, and stale plans fail closed.
 
-No production rollback or additional deployment is required for this evidence record.
+The owner runs the two maintenance actions from the newly deployed PWA after merge. An empty maintenance plan is the final operational proof for Phase 2.1B completion.
