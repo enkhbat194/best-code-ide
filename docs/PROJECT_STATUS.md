@@ -1,6 +1,6 @@
 # BestCode — Project Status
 
-Last updated: 2026-07-19
+Last updated: 2026-07-21
 
 Canonical plan: `/BESTCODE_MASTER.md` v2.0.0 (`LOCKED`)
 
@@ -161,8 +161,10 @@ Rollback proof status: **PASSED**. Phase 2.1A: **COMPLETED**.
 Master v2 rule: `BC-R23` — non-main branch production traffic хэзээ ч авахгүй.
 
 Current delivery package: Phase 2.1B — approval terminal-state, stale decision,
-idempotency/replay хамгаалалт. Code болон automated failure evidence бэлэн; exact `main`
-release ба installed-PWA owner observation үлдсэн.
+idempotency/replay хамгаалалт. Production owner observation exact `main · 15e23fb4`
+дээр passed. System Maintenance Center implementation PR #22-д staged; branch-aware
+stale approval regression хамгаалалт нэмэгдсэн. Final operational closure нь merge/deploy
+хийсний дараа SHA-pinned approval болон merged-branch cleanup-ийг нэг удаа ажиллуулах.
 
 ## 5. Current live capability vs target
 
@@ -175,6 +177,7 @@ release ба installed-PWA owner observation үлдсэн.
 | Preview | local preview + UI console capture | diagnostics evidence + AI repair loop |
 | Approval | terminal state, TTL/context SHA, decision idempotency, stale invalidation | full semantic outcome/evidence/rollback card |
 | Git delivery | branch/commit/push/PR + production source lock + tested previous-good rollback v1 | owner-visible release history, incident UX, one-tap approved rollback |
+| Maintenance | authenticated branch-aware stale approval and SHA-pinned merged branch cleanup staged | archive policy, scheduled GC, storage analytics |
 | Research | none | safe search/source/claim/dossier pipeline |
 | Runner | GitHub workflow dispatch only | isolated ephemeral terminal/build plane |
 | Evidence | scattered GitHub/CI metadata | canonical append-only evidence records |
@@ -184,7 +187,7 @@ release ба installed-PWA owner observation үлдсэн.
 
 ### P0
 
-- Approval terminal-state defect-ийн production installed-PWA owner observation хүлээгдэж байна.
+- Phase 2.1B maintenance implementation-ийг merge/deploy хийж, хоёр cleanup action-ийг ажиллуулах шаардлагатай.
 - Shared token-д rate/replay/per-client capability байхгүй.
 - Critical workflow/path class болон independent review хэрэгжээгүй.
 
@@ -209,7 +212,7 @@ release ба installed-PWA owner observation үлдсэн.
 
 ## 7. Next execution order
 
-1. Phase 2.1B — exact `main` release + installed-PWA observation-оор хаах.
+1. PR #22 CI → squash merge/deploy → System Maintenance Center cleanup → Phase 2.1B COMPLETED.
 2. Phase 2.1C/D — auth/rate/redaction/critical path conformance.
 3. Phase 3 — mobile version/update/semantic approval/rollback.
 4. Phase 4 — Mission Control/Second Brain/Asset Graph.

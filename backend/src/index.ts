@@ -3,6 +3,7 @@ import { handleApprovals } from './approvals'
 import { handleChat } from './chat'
 import { handleFilesCommit } from './files'
 import { handleLlm } from './llm'
+import { handleMaintenance } from './maintenance'
 import { handleMcp } from './mcp'
 import { openapiSpec } from './openapi'
 import { handleRelease, healthPayload } from './release'
@@ -77,6 +78,9 @@ export default {
 
     const approvalResponse = await handleApprovals(req, env, url)
     if (approvalResponse) return approvalResponse
+
+    const maintenanceResponse = await handleMaintenance(req, env, url)
+    if (maintenanceResponse) return maintenanceResponse
 
     const taskResponse = await handleTasks(req, env, url)
     if (taskResponse) return taskResponse
