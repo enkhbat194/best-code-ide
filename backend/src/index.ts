@@ -1,4 +1,5 @@
 import { handleActions } from './actions'
+import { handleAgentRuntime } from './agentRuntimeApi'
 import { handleApprovals } from './approvals'
 import { handleChat } from './chat'
 import { handleFilesCommit } from './files'
@@ -81,6 +82,9 @@ export default {
 
     const maintenanceResponse = await handleMaintenance(req, env, url)
     if (maintenanceResponse) return maintenanceResponse
+
+    const agentRuntimeResponse = await handleAgentRuntime(req, url)
+    if (agentRuntimeResponse) return agentRuntimeResponse
 
     const taskResponse = await handleTasks(req, env, url)
     if (taskResponse) return taskResponse
