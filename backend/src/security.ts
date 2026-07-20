@@ -5,6 +5,8 @@ export const DEFAULT_CHAT_REQUEST_BYTES = 2_097_152
 export const DEFAULT_FILE_REQUEST_BYTES = 5_242_880
 export const DEFAULT_WORKSPACE_REQUEST_BYTES = 10_485_760
 export const DEFAULT_RATE_LIMIT = 120
+export const DEFAULT_OWNER_RATE_LIMIT = 600
+export const DEFAULT_UNAUTHORIZED_RATE_LIMIT = 30
 export const DEFAULT_RATE_WINDOW_MS = 60_000
 
 const SENSITIVE_KEY = /(?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret|cookie|set-cookie|private[_-]?key)/i
@@ -17,6 +19,13 @@ export interface RequestLimitConfig {
   chatBytes: number
   fileBytes: number
   workspaceBytes: number
+}
+
+export interface RateLimitProfile {
+  owner: number
+  unauthorized: number
+  fallback: number
+  windowMs: number
 }
 
 interface RateWindow {
@@ -61,6 +70,10 @@ export function requestLimitFor(url: URL, config: RequestLimitConfig): number {
   if (url.pathname === '/api/files/commit') return config.fileBytes
   if (url.pathname === '/api/workspace/export') return config.workspaceBytes
   return config.defaultBytes
+}
+
+export function rateLimitForIdentity(authorized: boolean, profile: RateLimitProfile): number {
+  return authorized ? profile.owner : profile.unauthorized
 }
 
 export function enforceRequestLimits(req: Request, maxBytes = DEFAULT_MAX_REQUEST_BYTES): Response | null {
