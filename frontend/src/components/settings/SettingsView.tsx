@@ -18,12 +18,33 @@ function formatDate(value: string | null | undefined): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString('mn-MN')
 }
 
+async function reloadLatestPwa(): Promise<void> {
+  if ('serviceWorker' in navigator) {
+    const registrations = await navigator.serviceWorker.getRegistrations()
+    await Promise.all(registrations.map((registration) => registration.unregister()))
+  }
+
+  if ('caches' in window) {
+    const cacheNames = await caches.keys()
+    await Promise.all(
+      cacheNames
+        .filter((name) => name !== 'esbuild-wasm')
+        .map((name) => caches.delete(name)),
+    )
+  }
+
+  const nextUrl = new URL(window.location.href)
+  nextUrl.searchParams.set('bestcode_update', Date.now().toString())
+  window.location.replace(nextUrl.toString())
+}
+
 export function SettingsView() {
   const s = useSettingsStore()
   const configured = s.isConfigured()
   const [release, setRelease] = useState<ReleaseIntegrity | null>(null)
   const [releaseError, setReleaseError] = useState('')
   const [checkingRelease, setCheckingRelease] = useState(false)
+  const [reloadingPwa, setReloadingPwa] = useState(false)
 
   const refreshRelease = useCallback(async () => {
     if (!useSettingsStore.getState().isConfigured()) return
@@ -35,6 +56,17 @@ export function SettingsView() {
       setReleaseError(error instanceof Error ? error.message : String(error))
     } finally {
       setCheckingRelease(false)
+    }
+  }, [])
+
+  const handleReloadLatestPwa = useCallback(async () => {
+    setReloadingPwa(true)
+    setReleaseError('')
+    try {
+      await reloadLatestPwa()
+    } catch (error) {
+      setReleaseError(error instanceof Error ? error.message : String(error))
+      setReloadingPwa(false)
     }
   }, [])
 
@@ -62,7 +94,7 @@ export function SettingsView() {
             className={styles.iconButton}
             type="button"
             onClick={() => void refreshRelease()}
-            disabled={!configured || checkingRelease}
+            disabled={!configured || checkingRelease || reloadingPwa}
             aria-label="Release төлөв шинэчлэх"
           >
             <RefreshCw size={18} className={checkingRelease ? styles.spinning : ''} />
@@ -111,8 +143,14 @@ export function SettingsView() {
         </div>
 
         {integrityStatus === 'stale_main' && (
-          <button className={styles.reloadButton} type="button" onClick={() => window.location.reload()}>
-            PWA-г дахин ачаалах
+          <button
+            className={styles.reloadButton}
+            type="button"
+            onClick={() => void handleReloadLatestPwa()}
+            disabled={reloadingPwa}
+          >
+            <RotateCw size={18} className={reloadingPwa ? styles.spinning : ''} />
+            {reloadingPwa ? 'Хуучин cache цэвэрлэж байна…' : 'Хуучин cache цэвэрлээд шинэчлэх'}
           </button>
         )}
 
