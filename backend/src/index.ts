@@ -8,6 +8,11 @@ import { handleMcp } from './mcp'
 import { openapiSpec } from './openapi'
 import { handleRelease, healthPayload } from './release'
 import { handleRest } from './rest'
+import {
+  DEFAULT_MAX_REQUEST_BYTES,
+  enforceRequestLimits,
+  parsePositiveInteger,
+} from './security'
 import { handleTasks } from './tasks'
 import { handleWorkspaceExport } from './workspace'
 import { CORS_HEADERS, jsonError, jsonResponse, resolveSecret } from './utils'
@@ -53,6 +58,13 @@ export default {
     if (req.method === 'OPTIONS') {
       return new Response(null, { headers: CORS_HEADERS })
     }
+
+    const maxRequestBytes = parsePositiveInteger(
+      resolveSecret(env, 'MAX_REQUEST_BYTES'),
+      DEFAULT_MAX_REQUEST_BYTES,
+    )
+    const limitResponse = enforceRequestLimits(req, maxRequestBytes)
+    if (limitResponse) return limitResponse
 
     const url = new URL(req.url)
 
