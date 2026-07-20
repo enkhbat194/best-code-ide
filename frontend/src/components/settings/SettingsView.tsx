@@ -3,6 +3,7 @@ import { GitBranch, LockKeyhole, RefreshCw, RotateCw, Server, ShieldAlert, Shiel
 import { getReleaseIntegrity, type ReleaseIntegrity, type ReleaseIntegrityStatus } from '../../lib/repoAgent'
 import { clientRelease, shortSha } from '../../lib/release'
 import { useSettingsStore } from '../../store/settingsStore'
+import { MaintenanceCenter } from './MaintenanceCenter'
 import styles from './SettingsView.module.css'
 
 const statusCopy: Record<ReleaseIntegrityStatus, { label: string; tone: string }> = {
@@ -159,6 +160,8 @@ export function SettingsView() {
           {release?.backend.version_id ? ` · Worker ${release.backend.version_id.slice(0, 8)}` : ''}
         </div>
       </section>
+
+      <MaintenanceCenter />
 
       <div className={styles.status}>
         <span className={`${styles.dot} ${configured ? styles.connected : ''}`} />
