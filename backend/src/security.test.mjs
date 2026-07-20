@@ -6,7 +6,10 @@ import {
   DEFAULT_FILE_REQUEST_BYTES,
   DEFAULT_MAX_REQUEST_BYTES,
   DEFAULT_WORKSPACE_REQUEST_BYTES,
+  enforceRateLimit,
   enforceRequestLimits,
+  isOriginAllowed,
+  parseAllowedOrigins,
   parsePositiveInteger,
   redactSensitive,
   redactText,
@@ -59,6 +62,31 @@ test('route-aware limits reserve larger envelopes for code and workspace payload
     DEFAULT_WORKSPACE_REQUEST_BYTES,
   )
   assert.equal(requestLimitFor(new URL('https://bestcode.test/api/tasks'), config), DEFAULT_MAX_REQUEST_BYTES)
+})
+
+test('rate limiter allows a bounded window and rejects overflow', async () => {
+  const key = `test-${crypto.randomUUID()}`
+  assert.equal(enforceRateLimit(key, 2, 60_000, 1_000), null)
+  assert.equal(enforceRateLimit(key, 2, 60_000, 1_001), null)
+  const response = enforceRateLimit(key, 2, 60_000, 1_002)
+  assert.equal(response?.status, 429)
+  assert.equal(response.headers.get('Retry-After'), '60')
+  assert.equal(response.headers.get('X-RateLimit-Limit'), '2')
+})
+
+test('rate limiter opens a fresh window after reset', () => {
+  const key = `reset-${crypto.randomUUID()}`
+  assert.equal(enforceRateLimit(key, 1, 100, 1_000), null)
+  assert.equal(enforceRateLimit(key, 1, 100, 1_050)?.status, 429)
+  assert.equal(enforceRateLimit(key, 1, 100, 1_101), null)
+})
+
+test('configured origin allowlist rejects unknown browser origins but allows non-browser clients', () => {
+  const origins = parseAllowedOrigins('https://bestcode.example, https://preview.bestcode.example')
+  assert.equal(isOriginAllowed('https://bestcode.example', origins), true)
+  assert.equal(isOriginAllowed('https://evil.example', origins), false)
+  assert.equal(isOriginAllowed(null, origins), true)
+  assert.equal(isOriginAllowed('https://anything.example', parseAllowedOrigins(undefined)), true)
 })
 
 test('redaction removes bearer, query, provider and keyed secrets', () => {
