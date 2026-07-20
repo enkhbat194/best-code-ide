@@ -1,4 +1,4 @@
-import type { ApprovalOperation, TaskRecord } from './approvalStore'
+import type { ApprovalOperation, ProjectTaskRecord, TaskRecord } from './approvalStore'
 import type { Env } from './types'
 
 function stub(env: Env): DurableObjectStub {
@@ -78,7 +78,6 @@ export async function markPushed(env: Env, operationId: string): Promise<Approva
   return request<ApprovalOperation>(env, `/operations/${encodeURIComponent(operationId)}/pushed`, { method: 'POST' })
 }
 
-
 export async function markCompleted(env: Env, operationId: string): Promise<ApprovalOperation> {
   return request<ApprovalOperation>(env, `/operations/${encodeURIComponent(operationId)}/completed`, { method: 'POST' })
 }
@@ -116,6 +115,36 @@ export async function listTasks(
 
 export async function updateTask(env: Env, taskId: string, update: Partial<TaskRecord>): Promise<TaskRecord> {
   return request<TaskRecord>(env, `/tasks/${encodeURIComponent(taskId)}/update`, {
+    method: 'POST',
+    body: JSON.stringify(update),
+  })
+}
+
+export async function createProjectTask(env: Env, task: ProjectTaskRecord): Promise<ProjectTaskRecord> {
+  return request<ProjectTaskRecord>(env, '/project-tasks', { method: 'POST', body: JSON.stringify(task) })
+}
+
+export async function getProjectTask(env: Env, taskId: string): Promise<ProjectTaskRecord> {
+  return request<ProjectTaskRecord>(env, `/project-tasks/${encodeURIComponent(taskId)}`)
+}
+
+export async function listProjectTasks(
+  env: Env,
+  filters: { projectId?: string; status?: string; limit?: number } = {},
+): Promise<{ items: ProjectTaskRecord[]; count: number; total: number }> {
+  const query = new URLSearchParams()
+  if (filters.projectId) query.set('project_id', filters.projectId)
+  if (filters.status) query.set('status', filters.status)
+  if (filters.limit) query.set('limit', String(filters.limit))
+  return request(env, `/project-tasks?${query.toString()}`)
+}
+
+export async function updateProjectTask(
+  env: Env,
+  taskId: string,
+  update: Partial<ProjectTaskRecord>,
+): Promise<ProjectTaskRecord> {
+  return request<ProjectTaskRecord>(env, `/project-tasks/${encodeURIComponent(taskId)}/update`, {
     method: 'POST',
     body: JSON.stringify(update),
   })
