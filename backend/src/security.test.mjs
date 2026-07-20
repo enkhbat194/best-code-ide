@@ -2,21 +2,33 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  DEFAULT_CHAT_REQUEST_BYTES,
+  DEFAULT_FILE_REQUEST_BYTES,
   DEFAULT_MAX_REQUEST_BYTES,
+  DEFAULT_WORKSPACE_REQUEST_BYTES,
   enforceRequestLimits,
   parsePositiveInteger,
   redactSensitive,
   redactText,
+  requestLimitFor,
 } from './security.ts'
+
+const config = {
+  defaultBytes: DEFAULT_MAX_REQUEST_BYTES,
+  chatBytes: DEFAULT_CHAT_REQUEST_BYTES,
+  fileBytes: DEFAULT_FILE_REQUEST_BYTES,
+  workspaceBytes: DEFAULT_WORKSPACE_REQUEST_BYTES,
+}
 
 test('request limit rejects oversized mutation bodies', async () => {
   const request = new Request('https://bestcode.test/api/chat', {
     method: 'POST',
-    headers: { 'Content-Length': String(DEFAULT_MAX_REQUEST_BYTES + 1) },
+    headers: { 'Content-Length': String(DEFAULT_CHAT_REQUEST_BYTES + 1) },
   })
-  const response = enforceRequestLimits(request)
+  const response = enforceRequestLimits(request, requestLimitFor(new URL(request.url), config))
   assert.equal(response?.status, 413)
   assert.match((await response.json()).error, /exceeds/)
+  assert.equal(response.headers.get('X-BestCode-Request-Limit'), String(DEFAULT_CHAT_REQUEST_BYTES))
 })
 
 test('request limit allows reads and bounded bodies', () => {
@@ -25,7 +37,7 @@ test('request limit allows reads and bounded bodies', () => {
     method: 'POST',
     headers: { 'Content-Length': '1024' },
   })
-  assert.equal(enforceRequestLimits(request), null)
+  assert.equal(enforceRequestLimits(request, requestLimitFor(new URL(request.url), config)), null)
 })
 
 test('request limit rejects invalid content length', async () => {
@@ -35,6 +47,18 @@ test('request limit rejects invalid content length', async () => {
   })
   const response = enforceRequestLimits(request)
   assert.equal(response?.status, 400)
+})
+
+test('route-aware limits reserve larger envelopes for code and workspace payloads', () => {
+  assert.equal(requestLimitFor(new URL('https://bestcode.test/api/chat'), config), DEFAULT_CHAT_REQUEST_BYTES)
+  assert.equal(requestLimitFor(new URL('https://bestcode.test/api/llm'), config), DEFAULT_CHAT_REQUEST_BYTES)
+  assert.equal(requestLimitFor(new URL('https://bestcode.test/mcp'), config), DEFAULT_CHAT_REQUEST_BYTES)
+  assert.equal(requestLimitFor(new URL('https://bestcode.test/api/files/commit'), config), DEFAULT_FILE_REQUEST_BYTES)
+  assert.equal(
+    requestLimitFor(new URL('https://bestcode.test/api/workspace/export'), config),
+    DEFAULT_WORKSPACE_REQUEST_BYTES,
+  )
+  assert.equal(requestLimitFor(new URL('https://bestcode.test/api/tasks'), config), DEFAULT_MAX_REQUEST_BYTES)
 })
 
 test('redaction removes bearer, query, provider and keyed secrets', () => {
