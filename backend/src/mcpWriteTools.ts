@@ -1,5 +1,5 @@
 import * as gh from './github'
-import { createApproval, getApproval, listApprovals, markCompleted } from './approvalClient'
+import { createApproval, getApproval, listApprovals, markCompleted, markSuperseded } from './approvalClient'
 import type { ApprovalOperation, RiskLevel, StagedChange } from './approvalStore'
 import { createUnifiedDiff, applyUnifiedPatch } from './patch'
 import { getProject, type ProjectConfig } from './projects'
@@ -343,18 +343,24 @@ async function createBranchDeletionApproval(
   })
 }
 
-function assertBranchDeletionApproval(
+async function assertBranchDeletionApproval(
+  env: Env,
   operation: ApprovalOperation,
   project: ProjectConfig,
   branch: string,
   sha: string,
-): void {
+): Promise<void> {
   assertBranchDeletionOperation(operation, project, branch)
-  if (!operation.risk_reasons.includes(branchShaReason(sha))) {
-    throw new Error('BRANCH_DELETE_APPROVAL_MISMATCH: approval does not match the current branch SHA')
-  }
   if (operation.status !== 'approved') {
     throw new Error(`BRANCH_DELETE_APPROVAL_REQUIRED: operation must be approved; current status is ${operation.status}`)
+  }
+  if (!operation.risk_reasons.includes(branchShaReason(sha))) {
+    await markSuperseded(
+      env,
+      operation.operation_id,
+      `BRANCH_SHA_CHANGED: approved branch no longer points to the pinned SHA for ${branch}`,
+    )
+    throw new Error('BRANCH_DELETE_APPROVAL_MISMATCH: approval does not match the current branch SHA')
   }
 }
 
@@ -389,11 +395,14 @@ function classify(error: unknown) {
 
 async function stageOperation(
   env: Env,
+  token: string,
   project: ProjectConfig,
   branch: string,
   args: Record<string, unknown>,
   change: StagedChange,
 ): Promise<McpWriteToolResult> {
+  const branchContext = await gh.getBranch(token, project.owner, project.repo, branch)
+  if (!branchContext) throw new Error(`Branch not found: ${branch}`)
   const operationId = crypto.randomUUID()
   const now = new Date()
   const risk = riskForPath(change.path, change.action)
@@ -412,6 +421,7 @@ async function stageOperation(
     created_at: now.toISOString(),
     updated_at: now.toISOString(),
     expires_at: new Date(now.getTime() + OPERATION_TTL_MS).toISOString(),
+    base_context_sha: branchContext.sha,
   }
   await createApproval(env, operation)
   return finish({
@@ -495,7 +505,7 @@ export async function executeSafeWriteMcpTool(
         const current = await gh.getBranch(token, project.owner, project.repo, branch)
         if (!current) throw new Error(`Branch not found: ${branch}`)
         if (current.protected) throw new Error('PROTECTED_BRANCH: GitHub reports this branch as protected')
-        assertBranchDeletionApproval(operation, project, branch, current.sha)
+        await assertBranchDeletionApproval(env, operation, project, branch, current.sha)
         await gh.deleteBranch(token, project.owner, project.repo, branch)
         const completed = await markCompleted(env, operation.operation_id)
         return finish({
@@ -587,7 +597,7 @@ export async function executeSafeWriteMcpTool(
       if (existing?.content === content) throw new Error('INVALID_ARGUMENT: proposed content is identical to the branch content')
       const action: StagedChange['action'] = existing ? 'update' : 'create'
       const diff = createUnifiedDiff(path, existing?.content ?? null, content)
-      return stageOperation(env, project, branch, args, {
+      return stageOperation(env, token, project, branch, args, {
         action,
         path,
         base_sha: existing?.sha ?? null,
@@ -604,7 +614,7 @@ export async function executeSafeWriteMcpTool(
       const applied = applyUnifiedPatch(existing.content, patch, path)
       if (applied.content === existing.content) throw new Error('INVALID_ARGUMENT: patch produces no content change')
       const diff = createUnifiedDiff(path, existing.content, applied.content)
-      return stageOperation(env, project, branch, args, {
+      return stageOperation(env, token, project, branch, args, {
         action: 'update',
         path,
         base_sha: existing.sha,
@@ -618,7 +628,7 @@ export async function executeSafeWriteMcpTool(
       const existing = await gh.getFile(token, project.owner, project.repo, path, branch)
       if (!existing) throw new Error(`File not found: ${path}`)
       const diff = createUnifiedDiff(path, existing.content, null)
-      return stageOperation(env, project, branch, args, {
+      return stageOperation(env, token, project, branch, args, {
         action: 'delete',
         path,
         base_sha: existing.sha,

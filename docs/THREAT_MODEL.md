@@ -91,6 +91,12 @@ Trust boundary бүрт identity, capability, validation, audit, timeout, data c
 
 **Required:** semantic card, exact hash binding, TTL, terminal button state, idempotency key, one-time execute, stale invalidation, decision audit.
 
+**Phase 2.1B control:** PWA terminal state/disabled buttons, stable decision idempotency
+key, Durable Object exact-replay no-op, owner-visible TTL/context SHA, мөн branch/file/
+deployment context өөрчлөгдвөл write/dispatch-аас өмнө `superseded` invalidation нэмэгдсэн.
+Full semantic card, capability identity, audit/evidence event болон generic execution lease
+нь дараагийн gate хэвээр.
+
 ### T6 — Secret/data leakage — P0
 
 **Path:** log, diagnostics, source snapshot, model prompt/response, screenshot, error, artifact export.
@@ -177,8 +183,8 @@ Production feature workээс өмнө:
 - [x] active deployment SHA/source evidence endpoint байна;
 - [ ] shared token rotation хийж болох runbook ба leak-free logs;
 - [ ] rate limit + request size/time limit;
-- [ ] idempotency/replay protection critical operation-д;
-- [ ] terminal approval UI correct;
+- [ ] idempotency/replay protection бүх critical execution-д (decision replay control implemented);
+- [ ] terminal approval UI production observation (code/build implemented);
 - [ ] `.github/workflows/**`, auth, policy, deploy config critical class;
 - [ ] evidence record v1 + redaction fixtures;
 - [ ] threat/conformance test CI-д;

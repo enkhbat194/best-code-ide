@@ -4,6 +4,7 @@ export type ApprovalStatus =
   | 'rejected'
   | 'cancelled'
   | 'expired'
+  | 'superseded'
   | 'commit_prepared'
   | 'pushed'
   | 'pull_request_opened'
@@ -50,8 +51,14 @@ export interface ApprovalOperation {
   created_at: string
   updated_at: string
   expires_at: string
+  base_context_sha?: string
   decided_at?: string
+  decision?: 'approved' | 'rejected'
   decision_actor?: string
+  decision_idempotency_key?: string
+  expired_at?: string
+  superseded_at?: string
+  superseded_reason?: string
   parent_sha?: string
   prepared_commit_sha?: string
   prepared_commit_url?: string
@@ -110,6 +117,11 @@ export interface ProjectHandoffRecord {
 interface DecisionRequest {
   decision: 'approved' | 'rejected'
   actor?: string
+  idempotency_key?: string
+}
+
+interface SupersedeRequest {
+  reason?: string
 }
 
 function json(body: unknown, status = 200): Response {
@@ -137,6 +149,10 @@ function handoffKey(id: string): string {
 
 function validId(value: string): boolean {
   return /^[a-f0-9-]{16,64}$/i.test(value)
+}
+
+function validIdempotencyKey(value: string): boolean {
+  return /^[A-Za-z0-9._:-]{16,128}$/.test(value)
 }
 
 function isExpired(operation: ApprovalOperation): boolean {
@@ -200,7 +216,8 @@ export class ApprovalStore {
     const operation = await this.state.storage.get<ApprovalOperation>(operationKey(id))
     if (!operation) return null
     if (isExpired(operation)) {
-      const updated: ApprovalOperation = { ...operation, status: 'expired', updated_at: new Date().toISOString() }
+      const now = new Date().toISOString()
+      const updated: ApprovalOperation = { ...operation, status: 'expired', updated_at: now, expired_at: now }
       await this.state.storage.put(operationKey(id), updated)
       return updated
     }
@@ -322,6 +339,20 @@ export class ApprovalStore {
     if (request.method === 'POST' && url.pathname === '/operations') {
       const operation = (await request.json().catch(() => null)) as ApprovalOperation | null
       if (!operation || !validId(operation.operation_id)) return json({ error: 'A valid operation_id is required' }, 400)
+      if (operation.status !== 'pending_approval' || operation.approval_required !== true) {
+        return json({ error: 'A new approval operation must start in pending_approval status' }, 409)
+      }
+      if (!Number.isFinite(Date.parse(operation.expires_at)) || Date.parse(operation.expires_at) <= Date.now()) {
+        return json({ error: 'A new approval operation requires a future expires_at' }, 400)
+      }
+      if (
+        operation.decided_at || operation.decision || operation.decision_actor || operation.decision_idempotency_key ||
+        operation.expired_at || operation.superseded_at || operation.superseded_reason ||
+        operation.parent_sha || operation.prepared_commit_sha || operation.prepared_commit_url ||
+        operation.pushed_at || operation.pr_number || operation.pr_url || operation.completed_at
+      ) {
+        return json({ error: 'A new approval operation cannot contain terminal or execution state' }, 409)
+      }
       if (await this.state.storage.get(operationKey(operation.operation_id))) return json({ error: 'Operation already exists' }, 409)
       await this.state.storage.put(operationKey(operation.operation_id), operation)
       return json(operation, 201)
@@ -334,8 +365,9 @@ export class ApprovalStore {
       const values = await this.state.storage.list<ApprovalOperation>({ prefix: 'operation:' })
       const operations: ApprovalOperation[] = []
       for (const value of values.values()) {
+        const now = new Date().toISOString()
         const current = isExpired(value)
-          ? { ...value, status: 'expired' as const, updated_at: new Date().toISOString() }
+          ? { ...value, status: 'expired' as const, updated_at: now, expired_at: now }
           : value
         if (current !== value) await this.state.storage.put(operationKey(current.operation_id), current)
         if (status && current.status !== status) continue
@@ -359,7 +391,23 @@ export class ApprovalStore {
         if (!body || (body.decision !== 'approved' && body.decision !== 'rejected')) {
           return json({ error: 'decision must be approved or rejected' }, 400)
         }
+        const actor = cleanString(body.actor, 80) ?? 'bestcode-user'
+        const suppliedKey = typeof body.idempotency_key === 'string'
+          ? body.idempotency_key.trim()
+          : undefined
+        if (suppliedKey && !validIdempotencyKey(suppliedKey)) {
+          return json({ error: 'idempotency_key must be 16-128 URL-safe characters' }, 400)
+        }
+        // Legacy clients are assigned a deterministic key so a cached PWA cannot
+        // accidentally create a second transition during a rolling deployment.
+        const idempotencyKey = suppliedKey ?? `legacy:${operationId}:${body.decision}`
         if (operation.status !== 'pending_approval') {
+          if (
+            operation.decision === body.decision &&
+            operation.decision_idempotency_key === idempotencyKey
+          ) {
+            return json(operation)
+          }
           return json({ error: `Operation cannot be decided from status ${operation.status}`, operation }, 409)
         }
         const now = new Date().toISOString()
@@ -368,7 +416,29 @@ export class ApprovalStore {
           status: body.decision,
           updated_at: now,
           decided_at: now,
-          decision_actor: body.actor?.trim() || 'bestcode-user',
+          decision: body.decision,
+          decision_actor: actor,
+          decision_idempotency_key: idempotencyKey,
+        }
+        await this.state.storage.put(operationKey(operationId), updated)
+        return json(updated)
+      }
+
+      if (request.method === 'POST' && segments[2] === 'supersede') {
+        const body = (await request.json().catch(() => null)) as SupersedeRequest | null
+        const reason = cleanString(body?.reason, 500)
+        if (!reason) return json({ error: 'A bounded supersede reason is required' }, 400)
+        if (operation.status === 'superseded' && operation.superseded_reason === reason) return json(operation)
+        if (!['pending_approval', 'approved'].includes(operation.status)) {
+          return json({ error: `Operation cannot be superseded from status ${operation.status}`, operation }, 409)
+        }
+        const now = new Date().toISOString()
+        const updated: ApprovalOperation = {
+          ...operation,
+          status: 'superseded',
+          updated_at: now,
+          superseded_at: now,
+          superseded_reason: reason,
         }
         await this.state.storage.put(operationKey(operationId), updated)
         return json(updated)

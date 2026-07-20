@@ -98,6 +98,7 @@ export interface ApprovalOperation {
     | 'rejected'
     | 'cancelled'
     | 'expired'
+    | 'superseded'
     | 'commit_prepared'
     | 'pushed'
     | 'pull_request_opened'
@@ -109,6 +110,13 @@ export interface ApprovalOperation {
   created_at: string
   updated_at: string
   expires_at: string
+  base_context_sha?: string
+  decided_at?: string
+  decision?: 'approved' | 'rejected'
+  decision_actor?: string
+  expired_at?: string
+  superseded_at?: string
+  superseded_reason?: string
   prepared_commit_sha?: string
   prepared_commit_url?: string
   pushed_at?: string
@@ -161,7 +169,16 @@ async function rawRequest<T>(path: string, init?: RequestInit): Promise<T> {
     },
   })
   const text = await res.text()
-  if (!res.ok) throw new Error(text || `Backend error ${res.status}`)
+  if (!res.ok) {
+    let message = text
+    try {
+      const payload = JSON.parse(text) as { error?: string }
+      message = payload.error || text
+    } catch {
+      // Keep the bounded plain-text upstream error.
+    }
+    throw new Error(message || `Backend error ${res.status}`)
+  }
   return JSON.parse(text) as T
 }
 
@@ -266,9 +283,10 @@ export async function createDraftPullRequest(input: {
   ).result
 }
 
-export async function listApprovals(status = 'pending_approval'): Promise<ApprovalOperation[]> {
+export async function listApprovals(status?: ApprovalOperation['status']): Promise<ApprovalOperation[]> {
   const { owner, repo } = settings()
-  const query = new URLSearchParams({ status, limit: '50' })
+  const query = new URLSearchParams({ limit: '50' })
+  if (status) query.set('status', status)
   const payload = await rawRequest<{ items: ApprovalOperation[] }>(`/api/approvals?${query.toString()}`)
   return payload.items.filter(
     (item) => item.repository.owner.toLowerCase() === owner.toLowerCase() && item.repository.repo.toLowerCase() === repo.toLowerCase(),
@@ -278,10 +296,11 @@ export async function listApprovals(status = 'pending_approval'): Promise<Approv
 export async function decideApproval(
   operationId: string,
   decision: 'approved' | 'rejected',
+  idempotencyKey: string,
 ): Promise<ApprovalOperation> {
   return rawRequest<ApprovalOperation>(`/api/approvals/${encodeURIComponent(operationId)}/decision`, {
     method: 'POST',
-    body: JSON.stringify({ decision, actor: 'pwa-user' }),
+    body: JSON.stringify({ decision, actor: 'pwa-owner', idempotency_key: idempotencyKey }),
   })
 }
 

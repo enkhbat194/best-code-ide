@@ -1,4 +1,5 @@
-import { createApproval, createTask, getApproval, getTask, listTasks, updateTask } from './approvalClient'
+import * as gh from './github'
+import { createApproval, createTask, getApproval, getTask, listTasks, markSuperseded, updateTask } from './approvalClient'
 import type { ApprovalOperation, TaskRecord } from './approvalStore'
 import { getProject, type ProjectConfig } from './projects'
 import { dispatchWorkflow, readTaskLogs, refreshWorkflowTask } from './workflowRunner'
@@ -164,6 +165,14 @@ function publicTask(task: TaskRecord) {
 
 function classify(error: unknown) {
   const message = error instanceof Error ? error.message : String(error)
+  if (/DEPLOYMENT_CONTEXT_STALE/.test(message)) {
+    return {
+      code: 'DEPLOYMENT_CONTEXT_STALE',
+      message,
+      retryable: false,
+      action_required: 'Create and approve a new deployment operation for the current main SHA.',
+    }
+  }
   if (/not configured/i.test(message)) {
     return {
       code: 'DEPLOYMENT_NOT_CONFIGURED',
@@ -222,10 +231,13 @@ function classify(error: unknown) {
 
 async function createDeploymentApproval(
   env: Env,
+  token: string,
   project: ProjectConfig,
   branch: string,
   target: 'backend' | 'frontend' | 'all',
 ): Promise<ApprovalOperation> {
+  const branchContext = await gh.getBranch(token, project.owner, project.repo, branch)
+  if (!branchContext) throw new Error(`Deployment branch not found: ${branch}`)
   const now = new Date()
   const operation: ApprovalOperation = {
     operation_id: crypto.randomUUID(),
@@ -242,6 +254,7 @@ async function createDeploymentApproval(
     created_at: now.toISOString(),
     updated_at: now.toISOString(),
     expires_at: new Date(now.getTime() + APPROVAL_TTL_MS).toISOString(),
+    base_context_sha: branchContext.sha,
   }
   return createApproval(env, operation)
 }
@@ -307,7 +320,7 @@ export async function executeDeploymentMcpTool(
       const approvalId = typeof args.approval_operation_id === 'string' ? args.approval_operation_id.trim() : ''
 
       if (!approvalId) {
-        const operation = await createDeploymentApproval(env, project, branch, target)
+        const operation = await createDeploymentApproval(env, token, project, branch, target)
         return finish({
           ok: true,
           operation_id: operation.operation_id,
@@ -321,6 +334,7 @@ export async function executeDeploymentMcpTool(
             risk: operation.risk,
             risk_reasons: operation.risk_reasons,
             expires_at: operation.expires_at,
+            source_sha: operation.base_context_sha,
             next_action: 'The user must approve this production deployment in the BestCode Changes screen.',
           },
         })
@@ -328,6 +342,15 @@ export async function executeDeploymentMcpTool(
 
       const operation = await getApproval(env, approvalId)
       assertDeploymentApproval(operation, project, branch, target)
+      if (operation.base_context_sha) {
+        const current = await gh.getBranch(token, project.owner, project.repo, branch)
+        if (!current || current.sha !== operation.base_context_sha) {
+          const currentSha = current?.sha ?? 'missing'
+          const reason = `DEPLOYMENT_CONTEXT_STALE: ${branch} changed from ${operation.base_context_sha} to ${currentSha}`
+          await markSuperseded(env, operation.operation_id, reason)
+          throw new Error(reason)
+        }
+      }
 
       const existing = await taskForOperation(env, project.id, operation.operation_id)
       if (existing && existing.status !== 'failed' && existing.status !== 'cancelled') {

@@ -160,8 +160,9 @@ Rollback proof status: **PASSED**. Phase 2.1A: **COMPLETED**.
 
 Master v2 rule: `BC-R23` — non-main branch production traffic хэзээ ч авахгүй.
 
-Immediate next package: Phase 2.1B — approval terminal-state, stale decision,
-idempotency/replay хамгаалалтыг засах.
+Current delivery package: Phase 2.1B — approval terminal-state, stale decision,
+idempotency/replay хамгаалалт. Code болон automated failure evidence бэлэн; exact `main`
+release ба installed-PWA owner observation үлдсэн.
 
 ## 5. Current live capability vs target
 
@@ -172,7 +173,7 @@ idempotency/replay хамгаалалтыг засах.
 | PWA Chat | local `/api/llm` DeepSeek loop | repository-aware Mission Orchestrator |
 | Files | IndexedDB/GitHub import | professional tree/tabs/search/conflict |
 | Preview | local preview + UI console capture | diagnostics evidence + AI repair loop |
-| Approval | operation UI | semantic outcome/evidence/rollback, terminal state fix |
+| Approval | terminal state, TTL/context SHA, decision idempotency, stale invalidation | full semantic outcome/evidence/rollback card |
 | Git delivery | branch/commit/push/PR + production source lock + tested previous-good rollback v1 | owner-visible release history, incident UX, one-tap approved rollback |
 | Research | none | safe search/source/claim/dossier pipeline |
 | Runner | GitHub workflow dispatch only | isolated ephemeral terminal/build plane |
@@ -183,7 +184,7 @@ idempotency/replay хамгаалалтыг засах.
 
 ### P0
 
-- Approval UI terminal status дээр дахин decision илгээж алдаа харуулсан.
+- Approval terminal-state defect-ийн production installed-PWA owner observation хүлээгдэж байна.
 - Shared token-д rate/replay/per-client capability байхгүй.
 - Critical workflow/path class болон independent review хэрэгжээгүй.
 
@@ -208,7 +209,7 @@ idempotency/replay хамгаалалтыг засах.
 
 ## 7. Next execution order
 
-1. Phase 2.1B — approval terminal-state/idempotency.
+1. Phase 2.1B — exact `main` release + installed-PWA observation-оор хаах.
 2. Phase 2.1C/D — auth/rate/redaction/critical path conformance.
 3. Phase 3 — mobile version/update/semantic approval/rollback.
 4. Phase 4 — Mission Control/Second Brain/Asset Graph.

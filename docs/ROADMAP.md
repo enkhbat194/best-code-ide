@@ -94,16 +94,23 @@ UI дээр terminal approval state-ийг зөв тусгах хэрэгтэй.
 
 **Completion evidence:** PR #13 delivered the `main`-only workflow guard, `/api/release`, embedded PWA branch/SHA/build metadata, Worker version binding, owner-facing integrity card, release policy tests, and public smoke. PR #16 added provider-level trigger/active-version auditing and guarded repair. Run `29677501043` repaired the unsafe backend preview trigger and verified both Workers on exact `main` at 100% traffic. Run `29677894804` deliberately pushed non-main probe `435535ca...`; both builds were preview-only uploads and production remained on `main` `bf76487c...` at 100%. PR #18 added exact previous-good planning and the fail-safe rollback controller. Owner-approved run `29683440382` then activated and smoked the exact previous-good backend and PWA versions, restored both exact current versions, and passed restore smoke. Immutable artifact `rollback-rehearsal-approved-29683440382-1` has digest `sha256:9139cd1b05a47dfedf674e383126a5cf45508395178f6535a2c2e1566981892f`. Package exit evidence is complete.
 
-### Work package 2.1B — Approval/idempotency fix
+### Work package 2.1B — Approval/idempotency fix — IMPLEMENTED; OWNER PWA OBSERVATION PENDING
 
-- terminal approval state UI;
-- approved/rejected/expired operation buttons disable;
-- idempotency key mutation бүрт;
-- replay/duplicate approval negative tests;
-- stale base/context invalidation;
-- approval TTL ба owner-visible expiry.
+- [x] terminal approval state UI;
+- [x] approved/rejected/expired/superseded operation buttons disable;
+- [x] approval decision mutation бүрт stable idempotency key;
+- [x] exact replay нэг transition/нэг storage write гэдгийг батлах negative test;
+- [x] file delivery, branch deletion, production deployment-ийн stale base/context invalidation;
+- [x] approval TTL ба owner-visible expiry/context SHA;
+- [ ] installed PWA дээр owner screenshot/observation.
 
 **Exit evidence:** screenshot/e2e + duplicate request нэг side effect үүсгээгүй test.
+
+**Implementation evidence:** approval contract tests exact replay-г no-op болгож, шинэ key,
+эсрэг decision, expired operation-ийг татгалздаг. Failure-path tests branch/file/deployment
+context SHA өөрчлөгдөхөд external write/dispatch хийхгүй `superseded` болгодог. Frontend
+lint/build болон backend test/typecheck ногоон; production main merge ба installed-PWA
+observation гарсны дараа package-г `COMPLETED` болгоно.
 
 ### Work package 2.1C — Auth/rate/redaction foundation
 

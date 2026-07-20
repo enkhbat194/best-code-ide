@@ -25,8 +25,13 @@ function publicOperation(operation: ApprovalOperation) {
     created_at: operation.created_at,
     updated_at: operation.updated_at,
     expires_at: operation.expires_at,
+    base_context_sha: operation.base_context_sha,
     decided_at: operation.decided_at,
+    decision: operation.decision,
     decision_actor: operation.decision_actor,
+    expired_at: operation.expired_at,
+    superseded_at: operation.superseded_at,
+    superseded_reason: operation.superseded_reason,
     commit_sha: operation.prepared_commit_sha,
     commit_url: operation.prepared_commit_url,
     completed_at: operation.completed_at,
@@ -61,11 +66,21 @@ export async function handleApprovals(req: Request, env: Env, url: URL): Promise
     if (!action && req.method === 'GET') return jsonResponse(publicOperation(await getApproval(env, operationId)))
 
     if (action === 'decision' && req.method === 'POST') {
-      const body = (await req.json().catch(() => null)) as { decision?: string; actor?: string } | null
+      const body = (await req.json().catch(() => null)) as {
+        decision?: string
+        actor?: string
+        idempotency_key?: string
+      } | null
       if (body?.decision !== 'approved' && body?.decision !== 'rejected') {
         return jsonError('decision must be approved or rejected')
       }
-      const operation = await decideApproval(env, operationId, body.decision, body.actor?.trim() || 'bestcode-user')
+      const operation = await decideApproval(
+        env,
+        operationId,
+        body.decision,
+        body.actor?.trim() || 'bestcode-user',
+        body.idempotency_key,
+      )
       return jsonResponse(publicOperation(operation))
     }
 
