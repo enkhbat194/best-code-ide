@@ -12,8 +12,10 @@ import {
   DEFAULT_CHAT_REQUEST_BYTES,
   DEFAULT_FILE_REQUEST_BYTES,
   DEFAULT_MAX_REQUEST_BYTES,
+  DEFAULT_OWNER_RATE_LIMIT,
   DEFAULT_RATE_LIMIT,
   DEFAULT_RATE_WINDOW_MS,
+  DEFAULT_UNAUTHORIZED_RATE_LIMIT,
   DEFAULT_WORKSPACE_REQUEST_BYTES,
   clientRateKey,
   enforceRateLimit,
@@ -21,6 +23,7 @@ import {
   isOriginAllowed,
   parseAllowedOrigins,
   parsePositiveInteger,
+  rateLimitForIdentity,
   requestLimitFor,
   securityAudit,
 } from './security'
@@ -78,16 +81,6 @@ export default {
       return new Response(null, { headers: CORS_HEADERS })
     }
 
-    if (url.pathname !== '/health' && url.pathname !== '/openapi.json') {
-      const rateLimit = parsePositiveInteger(resolveSecret(env, 'RATE_LIMIT_REQUESTS'), DEFAULT_RATE_LIMIT)
-      const rateWindow = parsePositiveInteger(resolveSecret(env, 'RATE_LIMIT_WINDOW_MS'), DEFAULT_RATE_WINDOW_MS)
-      const rateResponse = enforceRateLimit(clientRateKey(req), rateLimit, rateWindow)
-      if (rateResponse) {
-        securityAudit('rate_limit_rejected', { path: url.pathname, method: req.method, client: clientRateKey(req) })
-        return rateResponse
-      }
-    }
-
     const requestLimit = requestLimitFor(url, {
       defaultBytes: parsePositiveInteger(resolveSecret(env, 'MAX_REQUEST_BYTES'), DEFAULT_MAX_REQUEST_BYTES),
       chatBytes: parsePositiveInteger(resolveSecret(env, 'MAX_CHAT_REQUEST_BYTES'), DEFAULT_CHAT_REQUEST_BYTES),
@@ -114,7 +107,28 @@ export default {
       return jsonResponse(openapiSpec(url.origin))
     }
 
-    if (!(await isAuthorized(req, env))) {
+    const authorized = await isAuthorized(req, env)
+    const rateProfile = {
+      owner: parsePositiveInteger(resolveSecret(env, 'OWNER_RATE_LIMIT_REQUESTS'), DEFAULT_OWNER_RATE_LIMIT),
+      unauthorized: parsePositiveInteger(
+        resolveSecret(env, 'UNAUTHORIZED_RATE_LIMIT_REQUESTS'),
+        DEFAULT_UNAUTHORIZED_RATE_LIMIT,
+      ),
+      fallback: parsePositiveInteger(resolveSecret(env, 'RATE_LIMIT_REQUESTS'), DEFAULT_RATE_LIMIT),
+      windowMs: parsePositiveInteger(resolveSecret(env, 'RATE_LIMIT_WINDOW_MS'), DEFAULT_RATE_WINDOW_MS),
+    }
+    const identity = authorized ? 'owner' : 'unauthorized'
+    const rateResponse = enforceRateLimit(
+      `${identity}:${clientRateKey(req)}`,
+      rateLimitForIdentity(authorized, rateProfile),
+      rateProfile.windowMs,
+    )
+    if (rateResponse) {
+      securityAudit('rate_limit_rejected', { path: url.pathname, method: req.method, identity })
+      return rateResponse
+    }
+
+    if (!authorized) {
       securityAudit('authorization_rejected', { path: url.pathname, method: req.method, client: clientRateKey(req) })
       return unauthorized()
     }
