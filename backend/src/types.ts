@@ -4,6 +4,7 @@ export interface Env {
   AUTH_TOKEN: string
   PROJECTS_JSON?: string
   MCP_ALLOWED_ORIGINS?: string
+  CORS_ALLOWED_ORIGINS?: string
   ENABLE_LEGACY_AGENT?: string
   ENABLE_LEGACY_REST_WRITES?: string
   REQUIRE_APPROVALS?: string
@@ -11,6 +12,8 @@ export interface Env {
   MAX_CHAT_REQUEST_BYTES?: string
   MAX_FILE_REQUEST_BYTES?: string
   MAX_WORKSPACE_REQUEST_BYTES?: string
+  RATE_LIMIT_REQUESTS?: string
+  RATE_LIMIT_WINDOW_MS?: string
   CF_VERSION_METADATA?: {
     id: string
     tag?: string
