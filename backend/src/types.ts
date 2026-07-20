@@ -13,6 +13,8 @@ export interface Env {
   MAX_FILE_REQUEST_BYTES?: string
   MAX_WORKSPACE_REQUEST_BYTES?: string
   RATE_LIMIT_REQUESTS?: string
+  OWNER_RATE_LIMIT_REQUESTS?: string
+  UNAUTHORIZED_RATE_LIMIT_REQUESTS?: string
   RATE_LIMIT_WINDOW_MS?: string
   CF_VERSION_METADATA?: {
     id: string
