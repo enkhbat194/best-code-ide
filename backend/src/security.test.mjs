@@ -5,12 +5,15 @@ import {
   DEFAULT_CHAT_REQUEST_BYTES,
   DEFAULT_FILE_REQUEST_BYTES,
   DEFAULT_MAX_REQUEST_BYTES,
+  DEFAULT_OWNER_RATE_LIMIT,
+  DEFAULT_UNAUTHORIZED_RATE_LIMIT,
   DEFAULT_WORKSPACE_REQUEST_BYTES,
   enforceRateLimit,
   enforceRequestLimits,
   isOriginAllowed,
   parseAllowedOrigins,
   parsePositiveInteger,
+  rateLimitForIdentity,
   redactSensitive,
   redactText,
   requestLimitFor,
@@ -21,6 +24,13 @@ const config = {
   chatBytes: DEFAULT_CHAT_REQUEST_BYTES,
   fileBytes: DEFAULT_FILE_REQUEST_BYTES,
   workspaceBytes: DEFAULT_WORKSPACE_REQUEST_BYTES,
+}
+
+const rateProfile = {
+  owner: DEFAULT_OWNER_RATE_LIMIT,
+  unauthorized: DEFAULT_UNAUTHORIZED_RATE_LIMIT,
+  fallback: 120,
+  windowMs: 60_000,
 }
 
 test('request limit rejects oversized mutation bodies', async () => {
@@ -62,6 +72,12 @@ test('route-aware limits reserve larger envelopes for code and workspace payload
     DEFAULT_WORKSPACE_REQUEST_BYTES,
   )
   assert.equal(requestLimitFor(new URL('https://bestcode.test/api/tasks'), config), DEFAULT_MAX_REQUEST_BYTES)
+})
+
+test('owner receives a high safety ceiling while unauthorized traffic stays tightly bounded', () => {
+  assert.equal(rateLimitForIdentity(true, rateProfile), DEFAULT_OWNER_RATE_LIMIT)
+  assert.equal(rateLimitForIdentity(false, rateProfile), DEFAULT_UNAUTHORIZED_RATE_LIMIT)
+  assert.ok(DEFAULT_OWNER_RATE_LIMIT > DEFAULT_UNAUTHORIZED_RATE_LIMIT)
 })
 
 test('rate limiter allows a bounded window and rejects overflow', async () => {
