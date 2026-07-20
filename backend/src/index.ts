@@ -12,10 +12,17 @@ import {
   DEFAULT_CHAT_REQUEST_BYTES,
   DEFAULT_FILE_REQUEST_BYTES,
   DEFAULT_MAX_REQUEST_BYTES,
+  DEFAULT_RATE_LIMIT,
+  DEFAULT_RATE_WINDOW_MS,
   DEFAULT_WORKSPACE_REQUEST_BYTES,
+  clientRateKey,
+  enforceRateLimit,
   enforceRequestLimits,
+  isOriginAllowed,
+  parseAllowedOrigins,
   parsePositiveInteger,
   requestLimitFor,
+  securityAudit,
 } from './security'
 import { handleTasks } from './tasks'
 import { handleWorkspaceExport } from './workspace'
@@ -59,11 +66,28 @@ function unauthorized(): Response {
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
+    const url = new URL(req.url)
+    const origin = req.headers.get('Origin')
+    const allowedOrigins = parseAllowedOrigins(resolveSecret(env, 'CORS_ALLOWED_ORIGINS'))
+    if (!isOriginAllowed(origin, allowedOrigins)) {
+      securityAudit('origin_rejected', { origin, path: url.pathname, method: req.method })
+      return jsonError('Origin is not allowed', 403)
+    }
+
     if (req.method === 'OPTIONS') {
       return new Response(null, { headers: CORS_HEADERS })
     }
 
-    const url = new URL(req.url)
+    if (url.pathname !== '/health' && url.pathname !== '/openapi.json') {
+      const rateLimit = parsePositiveInteger(resolveSecret(env, 'RATE_LIMIT_REQUESTS'), DEFAULT_RATE_LIMIT)
+      const rateWindow = parsePositiveInteger(resolveSecret(env, 'RATE_LIMIT_WINDOW_MS'), DEFAULT_RATE_WINDOW_MS)
+      const rateResponse = enforceRateLimit(clientRateKey(req), rateLimit, rateWindow)
+      if (rateResponse) {
+        securityAudit('rate_limit_rejected', { path: url.pathname, method: req.method, client: clientRateKey(req) })
+        return rateResponse
+      }
+    }
+
     const requestLimit = requestLimitFor(url, {
       defaultBytes: parsePositiveInteger(resolveSecret(env, 'MAX_REQUEST_BYTES'), DEFAULT_MAX_REQUEST_BYTES),
       chatBytes: parsePositiveInteger(resolveSecret(env, 'MAX_CHAT_REQUEST_BYTES'), DEFAULT_CHAT_REQUEST_BYTES),
@@ -74,7 +98,10 @@ export default {
       ),
     })
     const limitResponse = enforceRequestLimits(req, requestLimit)
-    if (limitResponse) return limitResponse
+    if (limitResponse) {
+      securityAudit('request_size_rejected', { path: url.pathname, method: req.method, requestLimit })
+      return limitResponse
+    }
 
     if (url.pathname === '/health') {
       const response = jsonResponse(healthPayload(env))
@@ -87,7 +114,10 @@ export default {
       return jsonResponse(openapiSpec(url.origin))
     }
 
-    if (!(await isAuthorized(req, env))) return unauthorized()
+    if (!(await isAuthorized(req, env))) {
+      securityAudit('authorization_rejected', { path: url.pathname, method: req.method, client: clientRateKey(req) })
+      return unauthorized()
+    }
 
     if (url.pathname === '/mcp' && (req.method === 'POST' || req.method === 'GET' || req.method === 'DELETE')) {
       return handleMcp(req, env)
