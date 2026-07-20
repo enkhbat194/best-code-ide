@@ -11,6 +11,7 @@ const releaseEnvironment = process.env.WORKERS_CI
   : process.env.GITHUB_ACTIONS
     ? 'github-actions'
     : 'local'
+const releaseCacheKey = releaseSha === 'unknown' ? releaseBuildId : releaseSha.slice(0, 12)
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -46,6 +47,7 @@ export default defineConfig({
         ],
       },
       workbox: {
+        cleanupOutdatedCaches: true,
         // App shell is cached for offline use; API calls always go to network.
         globPatterns: ['**/*.{js,css,html,png,svg,ico,woff2}'],
         navigateFallbackDenylist: [/^\/api\//],
@@ -53,7 +55,11 @@ export default defineConfig({
           {
             urlPattern: ({ request }) => request.destination === 'document',
             handler: 'NetworkFirst',
-            options: { cacheName: 'app-shell' },
+            options: {
+              cacheName: `app-shell-${releaseCacheKey}`,
+              networkTimeoutSeconds: 5,
+              expiration: { maxEntries: 10 },
+            },
           },
           {
             // esbuild's ~14MB wasm binary is fetched lazily (only when Preview is used),
