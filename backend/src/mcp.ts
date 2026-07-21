@@ -110,7 +110,7 @@ export async function handleMcp(req: Request, env: Env): Promise<Response> {
       return rpcResponse(message.id, {
         protocolVersion,
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: 'bestcode-repository-controller', title: 'BestCode Repository Controller', version: '0.10.0', description: 'Project-scoped repository controller with shared Project Brain, approval-gated Git delivery, CI tasks, production deployment, and exact rollback requests.' },
+        serverInfo: { name: 'bestcode-repository-controller', title: 'BestCode Repository Controller', version: '0.9.0', description: 'Project-scoped repository controller with shared Project Brain, approval-gated Git delivery, CI tasks, production deployment, and exact rollback requests.' },
         instructions: 'Use projects_list then project_context_get. Work on agent/<task>, stage coherent changes, wait for owner approval, run CI, and create PRs. Deployment and rollback are separate high-risk approvals. rollback_request never switches traffic.',
       }, { 'MCP-Protocol-Version': protocolVersion })
     }
