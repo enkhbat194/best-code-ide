@@ -1,3 +1,5 @@
+import type { ApprovalOperation, RiskLevel } from './approvalStore'
+
 export type CriticalPathClass =
   | 'canonical_source'
   | 'security_auth'
@@ -124,4 +126,25 @@ export function criticalPathPolicyError(findings: CriticalPathFinding[]): string
   const rules = [...new Set(critical.map((finding) => finding.rule_id))].join(', ')
   const paths = critical.map((finding) => finding.path).join(', ')
   return `${rules}: critical-path change requires explicit core/critical review: ${paths}`
+}
+
+function criticalRiskReasons(findings: CriticalPathFinding[]): string[] {
+  const critical = findings.filter((finding) => finding.critical)
+  const reasons: string[] = []
+  for (const finding of critical) {
+    reasons.push(`critical_path:${finding.rule_id}`)
+    reasons.push(`critical_path_file:${finding.path}`)
+  }
+  return [...new Set(reasons)]
+}
+
+export function applyCriticalPathRisk<T extends Pick<ApprovalOperation, 'changes' | 'risk' | 'risk_reasons'>>(
+  operation: T,
+): T & { risk: RiskLevel; risk_reasons: string[] } {
+  const findings = classifyCriticalPaths(operation.changes.map((change) => change.path))
+  const reasons = [...new Set([...operation.risk_reasons, ...criticalRiskReasons(findings)])]
+  const critical = findings.some((finding) => finding.critical)
+  operation.risk = critical ? 'high' : operation.risk
+  operation.risk_reasons = reasons
+  return operation as T & { risk: RiskLevel; risk_reasons: string[] }
 }
