@@ -4,6 +4,7 @@ import { executeReadOnlyMcpTool, readOnlyMcpTools } from './mcpReadTools'
 import { executeRollbackMcpTool, rollbackMcpTools } from './mcpRollbackTools'
 import { executeSafeWriteMcpTool, safeWriteMcpTools } from './mcpWriteTools'
 import { executeProjectBrainMcpTool, projectBrainMcpTools } from './projectBrainTools'
+import { executeMissionMcpTool, missionMcpTools } from './missionTools'
 import { jsonError, jsonResponse, resolveSecret } from './utils'
 import type { Env } from './types'
 
@@ -13,6 +14,7 @@ const DELIVERY_NAMES = new Set<string>(deliveryMcpTools.map((tool) => tool.name)
 const DEPLOYMENT_NAMES = new Set<string>(deploymentMcpTools.map((tool) => tool.name))
 const ROLLBACK_NAMES = new Set<string>(rollbackMcpTools.map((tool) => tool.name))
 const PROJECT_BRAIN_NAMES = new Set<string>(projectBrainMcpTools.map((tool) => tool.name))
+const MISSION_NAMES = new Set<string>(missionMcpTools.map((tool) => tool.name))
 const ACTION_NAMES = new Set<string>([
   ...READ_ONLY_NAMES,
   ...SAFE_WRITE_NAMES,
@@ -20,6 +22,7 @@ const ACTION_NAMES = new Set<string>([
   ...DEPLOYMENT_NAMES,
   ...ROLLBACK_NAMES,
   ...PROJECT_BRAIN_NAMES,
+  ...MISSION_NAMES,
 ])
 
 function validArguments(value: unknown): value is Record<string, unknown> {
@@ -52,7 +55,9 @@ export async function handleActions(req: Request, env: Env, url: URL): Promise<R
           ? await executeDeploymentMcpTool(toolName, parsed, githubToken, env)
           : ROLLBACK_NAMES.has(toolName)
             ? await executeRollbackMcpTool(toolName, parsed, githubToken, env)
-            : await executeProjectBrainMcpTool(toolName, parsed, githubToken, env)
+            : PROJECT_BRAIN_NAMES.has(toolName)
+              ? await executeProjectBrainMcpTool(toolName, parsed, githubToken, env)
+              : await executeMissionMcpTool(toolName, parsed, githubToken, env)
 
   console.log(JSON.stringify({
     event: 'openapi_action_call',
