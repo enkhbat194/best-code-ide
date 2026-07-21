@@ -22,6 +22,7 @@ export interface Env {
     timestamp: string
   }
   APPROVALS: DurableObjectNamespace
+  SECURITY_AUDIT: DurableObjectNamespace
 }
 
 export type Role = 'system' | 'user' | 'assistant' | 'tool'
