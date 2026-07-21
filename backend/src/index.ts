@@ -8,12 +8,32 @@ import { handleMcp } from './mcp'
 import { openapiSpec } from './openapi'
 import { handleRelease, healthPayload } from './release'
 import { handleRest } from './rest'
+import {
+  DEFAULT_CHAT_REQUEST_BYTES,
+  DEFAULT_FILE_REQUEST_BYTES,
+  DEFAULT_MAX_REQUEST_BYTES,
+  DEFAULT_OWNER_RATE_LIMIT,
+  DEFAULT_RATE_LIMIT,
+  DEFAULT_RATE_WINDOW_MS,
+  DEFAULT_UNAUTHORIZED_RATE_LIMIT,
+  DEFAULT_WORKSPACE_REQUEST_BYTES,
+  clientRateKey,
+  enforceRateLimit,
+  enforceRequestLimits,
+  isOriginAllowed,
+  parseAllowedOrigins,
+  parsePositiveInteger,
+  rateLimitForIdentity,
+  requestLimitFor,
+} from './security'
+import { handleSecurityAudit, persistSecurityAudit } from './securityAudit'
 import { handleTasks } from './tasks'
 import { handleWorkspaceExport } from './workspace'
 import { CORS_HEADERS, jsonError, jsonResponse, resolveSecret } from './utils'
 import type { Env } from './types'
 
 export { ApprovalStore } from './approvalStore'
+export { SecurityAuditStore } from './securityAuditStore'
 
 async function digest(value: string): Promise<Uint8Array> {
   return new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)))
@@ -21,8 +41,6 @@ async function digest(value: string): Promise<Uint8Array> {
 
 async function isAuthorized(req: Request, env: Env): Promise<boolean> {
   const header = req.headers.get('Authorization') ?? ''
-  // Some MCP hosts (e.g. Claude's custom-connector UI) can't set custom
-  // headers, so the token may also ride in a ?key= query parameter.
   const token = header.startsWith('Bearer ')
     ? header.slice(7)
     : (new URL(req.url).searchParams.get('key') ?? '')
@@ -49,12 +67,39 @@ function unauthorized(): Response {
 }
 
 export default {
-  async fetch(req: Request, env: Env): Promise<Response> {
+  async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const url = new URL(req.url)
+    const audit = (event: string, details: Record<string, unknown>) => {
+      ctx.waitUntil(persistSecurityAudit(env, event, details).catch((error) => {
+        console.error('Security audit persistence failed', error instanceof Error ? error.message : String(error))
+      }))
+    }
+
+    const origin = req.headers.get('Origin')
+    const allowedOrigins = parseAllowedOrigins(resolveSecret(env, 'CORS_ALLOWED_ORIGINS'))
+    if (!isOriginAllowed(origin, allowedOrigins)) {
+      audit('origin_rejected', { origin, path: url.pathname, method: req.method, identity: 'unknown' })
+      return jsonError('Origin is not allowed', 403)
+    }
+
     if (req.method === 'OPTIONS') {
       return new Response(null, { headers: CORS_HEADERS })
     }
 
-    const url = new URL(req.url)
+    const requestLimit = requestLimitFor(url, {
+      defaultBytes: parsePositiveInteger(resolveSecret(env, 'MAX_REQUEST_BYTES'), DEFAULT_MAX_REQUEST_BYTES),
+      chatBytes: parsePositiveInteger(resolveSecret(env, 'MAX_CHAT_REQUEST_BYTES'), DEFAULT_CHAT_REQUEST_BYTES),
+      fileBytes: parsePositiveInteger(resolveSecret(env, 'MAX_FILE_REQUEST_BYTES'), DEFAULT_FILE_REQUEST_BYTES),
+      workspaceBytes: parsePositiveInteger(
+        resolveSecret(env, 'MAX_WORKSPACE_REQUEST_BYTES'),
+        DEFAULT_WORKSPACE_REQUEST_BYTES,
+      ),
+    })
+    const limitResponse = enforceRequestLimits(req, requestLimit)
+    if (limitResponse) {
+      audit('request_size_rejected', { path: url.pathname, method: req.method, requestLimit, identity: 'unknown' })
+      return limitResponse
+    }
 
     if (url.pathname === '/health') {
       const response = jsonResponse(healthPayload(env))
@@ -62,12 +107,38 @@ export default {
       return response
     }
 
-    // Public schema discovery for ChatGPT Custom GPT Actions and REST clients.
     if (url.pathname === '/openapi.json' && req.method === 'GET') {
       return jsonResponse(openapiSpec(url.origin))
     }
 
-    if (!(await isAuthorized(req, env))) return unauthorized()
+    const authorized = await isAuthorized(req, env)
+    const rateProfile = {
+      owner: parsePositiveInteger(resolveSecret(env, 'OWNER_RATE_LIMIT_REQUESTS'), DEFAULT_OWNER_RATE_LIMIT),
+      unauthorized: parsePositiveInteger(
+        resolveSecret(env, 'UNAUTHORIZED_RATE_LIMIT_REQUESTS'),
+        DEFAULT_UNAUTHORIZED_RATE_LIMIT,
+      ),
+      fallback: parsePositiveInteger(resolveSecret(env, 'RATE_LIMIT_REQUESTS'), DEFAULT_RATE_LIMIT),
+      windowMs: parsePositiveInteger(resolveSecret(env, 'RATE_LIMIT_WINDOW_MS'), DEFAULT_RATE_WINDOW_MS),
+    }
+    const identity = authorized ? 'owner' : 'unauthorized'
+    const rateResponse = enforceRateLimit(
+      `${identity}:${clientRateKey(req)}`,
+      rateLimitForIdentity(authorized, rateProfile),
+      rateProfile.windowMs,
+    )
+    if (rateResponse) {
+      audit('rate_limit_rejected', { path: url.pathname, method: req.method, identity, client: clientRateKey(req) })
+      return rateResponse
+    }
+
+    if (!authorized) {
+      audit('authorization_rejected', { path: url.pathname, method: req.method, identity, client: clientRateKey(req) })
+      return unauthorized()
+    }
+
+    const securityAuditResponse = await handleSecurityAudit(req, env, url)
+    if (securityAuditResponse) return securityAuditResponse
 
     if (url.pathname === '/mcp' && (req.method === 'POST' || req.method === 'GET' || req.method === 'DELETE')) {
       return handleMcp(req, env)
@@ -93,7 +164,6 @@ export default {
     }
 
     if (url.pathname === '/api/chat' && req.method === 'POST') {
-      // Keep the in-app agent available by default; it can be explicitly disabled.
       if (disabledExplicitly(env.ENABLE_LEGACY_AGENT)) {
         return jsonError('In-app AI agent is disabled by configuration (ENABLE_LEGACY_AGENT=false).', 410)
       }
