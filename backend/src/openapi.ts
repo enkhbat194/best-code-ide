@@ -63,7 +63,7 @@ export function openapiSpec(origin: string): object {
     info: {
       title: 'BestCode Repository Controller',
       description: 'Project-scoped GitHub and IDE controller for ChatGPT Actions. Use projects_list first, work only on agent/<task> branches, stage code changes for user approval, commit, push, build, test, open a draft pull request, then request separate production deployment or exact rollback approvals.',
-      version: '0.10.0',
+      version: '0.9.0',
     },
     servers: [{ url: origin }],
     security: [{ bearerAuth: [] }],
