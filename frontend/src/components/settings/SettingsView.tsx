@@ -4,6 +4,7 @@ import { getReleaseIntegrity, type ReleaseIntegrity, type ReleaseIntegrityStatus
 import { clientRelease, shortSha } from '../../lib/release'
 import { useSettingsStore } from '../../store/settingsStore'
 import { MaintenanceCenter } from './MaintenanceCenter'
+import { TrustHistoryCard } from './TrustHistoryCard'
 import { UpdateStatusCard } from './UpdateStatusCard'
 import styles from './SettingsView.module.css'
 
@@ -99,6 +100,7 @@ export function SettingsView() {
       </section>
 
       <UpdateStatusCard backendSchema={backendSchema} backendSha={release?.repository.main_sha} />
+      <TrustHistoryCard />
       <MaintenanceCenter />
 
       <div className={styles.status}><span className={`${styles.dot} ${configured ? styles.connected : ''}`} />{configured ? 'Backend тохируулагдсан' : 'Backend тохируулаагүй байна'}</div>
