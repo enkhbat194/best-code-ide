@@ -1,0 +1,11 @@
+div[role="tablist"][aria-label="Mission workspace mode"] {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+@media (max-width: 390px) {
+  div[role="tablist"][aria-label="Mission workspace mode"] button {
+    gap: 4px;
+    padding-inline: 4px;
+    font-size: 11px;
+  }
+}
