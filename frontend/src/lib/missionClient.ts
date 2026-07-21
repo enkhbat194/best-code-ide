@@ -23,7 +23,7 @@ export interface MissionGoal {
 export interface MissionCriterion {
   criterion_id: string
   statement: string
-  status: 'pending' | 'passed' | 'failed'
+  status: 'pending' | 'passed' | 'failed' | 'waived'
   evidence_ids: string[]
 }
 
@@ -39,7 +39,7 @@ export interface MissionTask {
   task_id: string
   title: string
   priority: 'critical' | 'high' | 'normal' | 'low' | 'background'
-  status: 'pending' | 'ready' | 'running' | 'waiting' | 'blocked' | 'completed' | 'cancelled'
+  status: 'pending' | 'ready' | 'running' | 'waiting' | 'blocked' | 'completed' | 'failed' | 'cancelled'
   dependency_ids: string[]
   operation_ids: string[]
   assigned_agent_id: string | null
@@ -151,6 +151,18 @@ async function transitionMission(mission: MissionRecord, lifecycle: string): Pro
   return result.mission
 }
 
+async function acquireLease(mission: MissionRecord, holderId: string, leaseId: string, ttlSeconds = 180): Promise<MissionRecord> {
+  const result = await action<{ mission: MissionRecord }>('mission_lease', {
+    mission_id: mission.mission_id,
+    expected_context_version: mission.context_version,
+    command: 'acquire',
+    holder_id: holderId,
+    lease_id: leaseId,
+    ttl_seconds: ttlSeconds,
+  })
+  return result.mission
+}
+
 async function releaseLease(missionId: string, holderId: string): Promise<MissionRecord> {
   const latest = await getMission(missionId)
   const result = await action<{ mission: MissionRecord }>('mission_lease', {
@@ -162,11 +174,13 @@ async function releaseLease(missionId: string, holderId: string): Promise<Missio
   return result.mission
 }
 
+type MissionMutation = 'add_goal' | 'add_criterion' | 'resolve_decision'
+
 async function mutateMission(
   mission: MissionRecord,
   holderId: string,
   leaseId: string,
-  mutation: 'add_goal' | 'add_criterion',
+  mutation: MissionMutation,
   idempotencyKey: string,
   entity: Record<string, unknown>,
 ): Promise<MissionRecord> {
@@ -204,15 +218,7 @@ export async function createMissionFromIntent(draft: MissionCreationDraft): Prom
   let mission = await transitionMission(created.mission, 'framing')
 
   try {
-    const leased = await action<{ mission: MissionRecord }>('mission_lease', {
-      mission_id: missionId,
-      expected_context_version: mission.context_version,
-      command: 'acquire',
-      holder_id: holderId,
-      lease_id: leaseId,
-      ttl_seconds: 180,
-    })
-    mission = leased.mission
+    mission = await acquireLease(mission, holderId, leaseId)
     leaseAcquired = true
 
     mission = await mutateMission(
@@ -252,6 +258,52 @@ export async function createMissionFromIntent(draft: MissionCreationDraft): Prom
         await releaseLease(missionId, holderId)
       } catch {
         // Preserve the original failure. The bounded lease expires automatically.
+      }
+    }
+    throw error
+  }
+}
+
+export async function resolveMissionDecision(
+  missionId: string,
+  decisionId: string,
+  status: 'accepted' | 'rejected' | 'superseded',
+  rationale: string,
+): Promise<MissionRecord> {
+  const holderId = `bestcode-pwa-owner-${crypto.randomUUID()}`
+  const leaseId = crypto.randomUUID()
+  let leaseAcquired = false
+  let mission = await getMission(missionId)
+  const decision = mission.decisions.find((item) => item.decision_id === decisionId)
+  if (!decision || decision.status !== 'open') throw new MissionClientError('DECISION_NOT_OPEN', 'Энэ шийдвэр аль хэдийн хаагдсан эсвэл олдсонгүй.')
+
+  try {
+    mission = await acquireLease(mission, holderId, leaseId, 120)
+    leaseAcquired = true
+    mission = await mutateMission(
+      mission,
+      holderId,
+      leaseId,
+      'resolve_decision',
+      `mission.canvas.decision.${decisionId}.${status}`,
+      {
+        decision_id: decisionId,
+        status,
+        rationale: rationale.trim().slice(0, 1000) || `Owner Mission Canvas дээр ${status} шийдвэр гаргав.`,
+      },
+    )
+    mission = await releaseLease(missionId, holderId)
+    leaseAcquired = false
+    if (mission.lifecycle === 'decision' && mission.decisions.every((item) => item.status !== 'open')) {
+      mission = await transitionMission(mission, 'planned')
+    }
+    return mission
+  } catch (error) {
+    if (leaseAcquired) {
+      try {
+        await releaseLease(missionId, holderId)
+      } catch {
+        // Keep original failure; the lease is bounded.
       }
     }
     throw error

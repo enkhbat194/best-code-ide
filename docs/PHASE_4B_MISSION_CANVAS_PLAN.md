@@ -1,6 +1,6 @@
 # Phase 4B — Mission Canvas delivery plan
 
-Status: `IN PROGRESS — 4B.1 MERGED; 4B.2 IMPLEMENTED`
+Status: `IN PROGRESS — 4B.1–4B.2 MERGED; 4B.3 IMPLEMENTED`
 
 ## Owner outcome
 
@@ -28,9 +28,9 @@ Evidence:
 - Validate run `29827166318`: success;
 - merge SHA `c71230a0571f8333d9c14ba51664df6228073514`.
 
-### 4B.2 — AI framing and done-contract editor — IMPLEMENTED
+### 4B.2 — AI framing and done-contract editor — MERGED
 
-Delivered in current package:
+Delivered:
 
 - owner intent-ийг bounded structured DeepSeek framing request болгох;
 - strict JSON extraction and schema validation;
@@ -42,6 +42,13 @@ Delivered in current package:
 - create flow-ийн writer lease cleanup;
 - AI unavailable үед explicit manual creation fallback.
 
+Evidence:
+
+- PR #45;
+- Test run `29827675319`: success;
+- Validate run `29827675318`: success;
+- merge SHA `d13dfbee466b7c9f82e1699b220f3700603f0b48`.
+
 Safety:
 
 - AI proposal нь owner confirmation биш;
@@ -50,24 +57,31 @@ Safety:
 - repository/deployment/rollback action эхлүүлэхгүй;
 - DeepSeek secret browser руу гарахгүй, existing authenticated `/api/llm` proxy ашиглана.
 
-### 4B.3 — Multimodal capture, timeline and decision inbox
+### 4B.3 — Multimodal capture, timeline and decision inbox — IMPLEMENTED
 
-Scope:
+Delivered in current package:
 
-- voice transcription capture;
-- image/file attachment metadata capture;
-- bounded URL reference capture;
-- task/operation progress timeline-г action grouping болон status copy-оор сайжруулах;
-- active agent/role/writer lease heartbeat display;
-- open Decision inbox;
-- decision accept/reject/supersede mutation UX;
-- stale-context refresh and retry UX.
+- iOS/browser Web Speech API боломжтой үед Mongolian voice transcription;
+- Web Speech байхгүй үед keyboard microphone/text fallback тайлбар;
+- image/file сонголтоос зөвхөн filename, MIME type, size metadata capture;
+- http/https URL normalize болон credential/hash stripping;
+- нийт 5 bounded reference metadata-г Goal outcome дотор ил owner-readable reference хэсгээр durable хадгалах;
+- binary file/image-г Mission record руу upload хийхгүй;
+- Mission composer-ийг тусдаа component болгож modular болгох;
+- operation timeline-д human-readable mutation label;
+- writer lease holder, expiry, heartbeat display;
+- open Decision бүрт owner note + accept/reject/supersede action;
+- decision mutation writer lease болон current context version ашиглана;
+- бүх open decision хаагдаж lifecycle `decision` байвал `planned` руу буцаана;
+- context mismatch/lease conflict үед “Шинэ төлөв татах” recovery UX.
 
 Safety:
 
-- file/image binary-г Mission v1 record дотор хийхгүй, зөвхөн bounded reference metadata;
-- microphone/file permission user gesture-ээр;
-- external content нь prompt-injection болон retention boundary-тай.
+- microphone болон file picker зөвхөн user gesture-ээр эхэлнэ;
+- reference binary хадгалахгүй, metadata нь 5 item, нэр/төрөл/хэмжээ/URL-аар bounded;
+- URL зөвхөн http/https бөгөөд username/password/hash хадгалахгүй;
+- owner decision бүр active writer lease, optimistic context version, idempotency key ашиглана;
+- repository write, deployment, rollback эсвэл production traffic action эхлүүлэхгүй.
 
 ### 4B.4 — Next-action engine and closeout
 
@@ -93,4 +107,4 @@ Exit evidence:
 
 ## Current package boundary
 
-4B.2 нь AI framing болон creation-time done-contract editor. Voice/image/file/URL ingestion, existing Mission criteria mutation editor, decision mutation, cross-provider handoff болон Phase 4B closeout-г дууссан гэж тэмдэглэхгүй. Тэдгээрийг 4B.3–4B.4 багцаар хэрэгжүүлнэ.
+4B.3 multimodal metadata capture болон owner decision inbox-ийг хэрэгжүүлсэн. Binary asset vault, existing Mission-ийн criteria editor, provider-neutral executable handoff, full next-action policy engine, installed-PWA closeout smoke-г дууссан гэж тэмдэглэхгүй. Эдгээрийн Phase 4B-д хамаарах хэсгийг 4B.4 багцаар хэрэгжүүлнэ; asset binary/storage нь Phase 4D/Asset Graph хүрээнд байна.

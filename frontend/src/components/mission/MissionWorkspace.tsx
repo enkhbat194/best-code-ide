@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Bot, Target } from 'lucide-react'
 import { ChatView } from '../chat/ChatView'
 import { MissionCanvas } from './MissionCanvas'
+import './MissionEnhancements.css'
 import styles from './MissionCanvas.module.css'
 
 type WorkspaceMode = 'mission' | 'chat'

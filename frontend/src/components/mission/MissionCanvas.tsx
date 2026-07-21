@@ -9,24 +9,20 @@ import {
   LoaderCircle,
   Plus,
   RefreshCw,
-  ShieldCheck,
-  Sparkles,
   Target,
-  Trash2,
   UserRound,
 } from 'lucide-react'
 import {
-  createMissionFromIntent,
   getMission,
   listMissions,
-  type MissionIntentDraft,
+  resolveMissionDecision,
+  type MissionDecision,
+  type MissionOperation,
   type MissionRecord,
 } from '../../lib/missionClient'
-import { frameMissionIntent, type MissionFramingProposal } from '../../lib/missionFraming'
 import { useSettingsStore } from '../../store/settingsStore'
+import { MissionComposer } from './MissionComposer'
 import styles from './MissionCanvas.module.css'
-
-const emptyDraft: MissionIntentDraft = { title: '', intent: '' }
 
 function formatDate(value: string): string {
   const date = new Date(value)
@@ -49,6 +45,7 @@ function lifecycleLabel(value: string): string {
     packaged: 'Багцлагдсан',
     paused: 'Түр зогссон',
     cancelled: 'Цуцлагдсан',
+    failed: 'Алдаатай зогссон',
   }
   return labels[value] ?? value
 }
@@ -64,18 +61,31 @@ function nextAction(mission: MissionRecord): string {
   return 'Одоогийн төлөвөөс хамгийн үнэ цэнтэй дараагийн ажлыг төлөвлөх'
 }
 
+function operationLabel(operation: MissionOperation): string {
+  const kind = operation.kind.replace('mission_mutation:', '')
+  const labels: Record<string, string> = {
+    add_goal: 'Goal нэмэгдсэн',
+    add_criterion: 'Done criterion нэмэгдсэн',
+    record_decision: 'Owner шийдвэр хүссэн',
+    resolve_decision: 'Owner шийдвэр гаргасан',
+    add_task: 'Task нэмэгдсэн',
+    update_task: 'Task шинэчлэгдсэн',
+    record_operation: 'Operation бүртгэгдсэн',
+    update_operation: 'Operation шинэчлэгдсэн',
+  }
+  return labels[kind] ?? operation.kind.replaceAll('_', ' ')
+}
+
 export function MissionCanvas() {
   const configured = useSettingsStore((state) => state.isConfigured())
   const owner = useSettingsStore((state) => state.owner)
   const repo = useSettingsStore((state) => state.repo)
   const [missions, setMissions] = useState<MissionRecord[]>([])
   const [selected, setSelected] = useState<MissionRecord | null>(null)
-  const [draft, setDraft] = useState<MissionIntentDraft>(emptyDraft)
-  const [proposal, setProposal] = useState<MissionFramingProposal | null>(null)
   const [composerOpen, setComposerOpen] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [framing, setFraming] = useState(false)
-  const [creating, setCreating] = useState(false)
+  const [resolvingDecisionId, setResolvingDecisionId] = useState('')
+  const [decisionNotes, setDecisionNotes] = useState<Record<string, string>>({})
   const [error, setError] = useState('')
 
   const refresh = useCallback(async (preferredId?: string) => {
@@ -109,44 +119,9 @@ export function MissionCanvas() {
   }, [configured]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const openDecisions = useMemo(() => selected?.decisions.filter((item) => item.status === 'open') ?? [], [selected])
-  const activeTasks = useMemo(() => selected?.tasks.filter((item) => !['completed', 'cancelled'].includes(item.status)) ?? [], [selected])
-  const recentOperations = useMemo(() => [...(selected?.operations ?? [])].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 5), [selected])
-
-  function updateDraft(field: keyof MissionIntentDraft, value: string) {
-    setDraft((current) => ({ ...current, [field]: value }))
-    setProposal(null)
-  }
-
-  async function frameIntent() {
-    setFraming(true)
-    setError('')
-    try {
-      setProposal(await frameMissionIntent(draft))
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setFraming(false)
-    }
-  }
-
-  async function createMission(useProposal: boolean) {
-    setCreating(true)
-    setError('')
-    try {
-      const source = useProposal && proposal
-        ? { title: proposal.title, intent: proposal.outcome, acceptanceCriteria: proposal.acceptanceCriteria }
-        : draft
-      const mission = await createMissionFromIntent(source)
-      setDraft(emptyDraft)
-      setProposal(null)
-      setComposerOpen(false)
-      await refresh(mission.mission_id)
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setCreating(false)
-    }
-  }
+  const activeTasks = useMemo(() => selected?.tasks.filter((item) => !['completed', 'cancelled', 'failed'].includes(item.status)) ?? [], [selected])
+  const recentOperations = useMemo(() => [...(selected?.operations ?? [])].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 7), [selected])
+  const staleError = /context version mismatch|active writer lease|held by/i.test(error)
 
   async function selectMission(missionId: string) {
     setLoading(true)
@@ -161,11 +136,19 @@ export function MissionCanvas() {
     }
   }
 
-  function openComposer() {
-    setDraft(emptyDraft)
-    setProposal(null)
+  async function resolveDecision(decision: MissionDecision, status: 'accepted' | 'rejected' | 'superseded') {
+    if (!selected) return
+    setResolvingDecisionId(decision.decision_id)
     setError('')
-    setComposerOpen(true)
+    try {
+      const updated = await resolveMissionDecision(selected.mission_id, decision.decision_id, status, decisionNotes[decision.decision_id] ?? '')
+      setDecisionNotes((current) => ({ ...current, [decision.decision_id]: '' }))
+      await refresh(updated.mission_id)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setResolvingDecisionId('')
+    }
   }
 
   return (
@@ -180,7 +163,7 @@ export function MissionCanvas() {
           <button type="button" aria-label="Mission жагсаалт шинэчлэх" onClick={() => void refresh()} disabled={!configured || loading}>
             <RefreshCw size={18} className={loading ? styles.spinning : ''} />
           </button>
-          <button type="button" aria-label="Шинэ Mission" onClick={openComposer} disabled={!configured}>
+          <button type="button" aria-label="Шинэ Mission" onClick={() => { setError(''); setComposerOpen(true) }} disabled={!configured}>
             <Plus size={19} />
           </button>
         </div>
@@ -209,88 +192,25 @@ export function MissionCanvas() {
             )}
 
             {composerOpen && (
-              <section className={styles.composerCard}>
-                <div className={styles.sectionTitle}>
-                  <Target size={19} />
-                  <div><span>INTENT CAPTURE</span><h2>Шинэ Mission үүсгэх</h2></div>
-                </div>
-                <label>
-                  Mission-ийн нэр
-                  <input value={draft.title} onChange={(event) => updateDraft('title', event.target.value)} placeholder="Жишээ: Phase 4B Mission Canvas бүтээх" maxLength={300} />
-                </label>
-                <label>
-                  Эцэст нь ямар бодит үр дүн хүсэж байна вэ?
-                  <textarea value={draft.intent} onChange={(event) => updateDraft('intent', event.target.value)} placeholder="Хэрэглэгч юу хийж чаддаг болох, ямар нөхцөлд дууссан гэж тооцохыг энгийн үгээр бичнэ." maxLength={1000} rows={5} />
-                </label>
-
-                {!proposal && (
-                  <button type="button" className={styles.aiButton} onClick={() => void frameIntent()} disabled={framing || creating || !draft.title.trim() || !draft.intent.trim()}>
-                    {framing ? <LoaderCircle size={18} className={styles.spinning} /> : <Sparkles size={18} />}
-                    {framing ? 'AI ойлголт боловсруулж байна…' : 'AI-аар ойлголт ба done criteria боловсруулах'}
-                  </button>
-                )}
-
-                {proposal && (
-                  <div className={styles.proposalCard}>
-                    <div className={styles.proposalHeader}>
-                      <div><span>AI UNDERSTANDING</span><h3>AI-ийн ойлгосон нь</h3></div>
-                      <button type="button" onClick={() => void frameIntent()} disabled={framing}><RefreshCw size={16} className={framing ? styles.spinning : ''} /> Дахин</button>
-                    </div>
-                    <label>
-                      Баталгаажуулах нэр
-                      <input value={proposal.title} onChange={(event) => setProposal((current) => current ? { ...current, title: event.target.value } : current)} maxLength={300} />
-                    </label>
-                    <label>
-                      Баталгаажуулах үр дүн
-                      <textarea value={proposal.outcome} onChange={(event) => setProposal((current) => current ? { ...current, outcome: event.target.value } : current)} maxLength={1000} rows={4} />
-                    </label>
-                    <ProposalList title="Таамагласан нөхцөл" items={proposal.assumptions} />
-                    <ProposalList title="Энэ Mission-д орохгүй" items={proposal.exclusions} />
-                    <ProposalList title="Эрсдэл" items={proposal.risks} />
-                    <div className={styles.criteriaEditor}>
-                      <div className={styles.criteriaEditorTitle}><strong>Done criteria</strong><span>{proposal.acceptanceCriteria.length}/4</span></div>
-                      {proposal.acceptanceCriteria.map((criterion, index) => (
-                        <div className={styles.criteriaEditRow} key={`${index}-${criterion.slice(0, 12)}`}>
-                          <input
-                            value={criterion}
-                            maxLength={180}
-                            onChange={(event) => setProposal((current) => current ? { ...current, acceptanceCriteria: current.acceptanceCriteria.map((item, itemIndex) => itemIndex === index ? event.target.value : item) } : current)}
-                          />
-                          <button type="button" aria-label="Шалгуур устгах" onClick={() => setProposal((current) => current ? { ...current, acceptanceCriteria: current.acceptanceCriteria.filter((_, itemIndex) => itemIndex !== index) } : current)}><Trash2 size={16} /></button>
-                        </div>
-                      ))}
-                      {proposal.acceptanceCriteria.length < 4 && (
-                        <button type="button" className={styles.addCriterion} onClick={() => setProposal((current) => current ? { ...current, acceptanceCriteria: [...current.acceptanceCriteria, ''] } : current)}><Plus size={16} /> Шалгуур нэмэх</button>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                <div className={styles.confirmation}>
-                  <ShieldCheck size={18} />
-                  <div>
-                    <strong>Owner баталгаажуулалт</strong>
-                    <span>{proposal ? 'AI proposal автоматаар батлагдахгүй. Та засварласан нэр, үр дүн, done criteria-г баталсны дараа л durable Mission-д хадгална.' : 'AI ашиглахгүйгээр шууд үүсгэвэл таны бичсэн нэр ба үр дүн Goal болж хадгалагдана; done criteria хоосон үлдэнэ.'}</span>
-                  </div>
-                </div>
-                <div className={styles.composerActions}>
-                  {missions.length > 0 && <button type="button" className={styles.secondaryButton} onClick={() => setComposerOpen(false)}>Болих</button>}
-                  {!proposal && (
-                    <button type="button" className={styles.secondaryButton} onClick={() => void createMission(false)} disabled={creating || framing || !draft.title.trim() || !draft.intent.trim()}>
-                      AI-гүйгээр үүсгэх
-                    </button>
-                  )}
-                  {proposal && (
-                    <button type="button" className={styles.primaryButton} onClick={() => void createMission(true)} disabled={creating || framing || !proposal.title.trim() || !proposal.outcome.trim() || proposal.acceptanceCriteria.filter((item) => item.trim()).length < 2}>
-                      {creating ? <LoaderCircle size={18} className={styles.spinning} /> : <CheckCircle2 size={18} />}
-                      {creating ? 'Mission хадгалж байна…' : 'Ойлголт ба done contract-ийг батлах'}
-                    </button>
-                  )}
-                </div>
-              </section>
+              <MissionComposer
+                hasExistingMissions={missions.length > 0}
+                onCancel={() => setComposerOpen(false)}
+                onCreated={async (mission) => {
+                  setComposerOpen(false)
+                  await refresh(mission.mission_id)
+                }}
+              />
             )}
 
-            {error && <div className={styles.error}><AlertCircle size={17} /><span>{error}</span></div>}
+            {error && (
+              <div className={styles.error}>
+                <AlertCircle size={17} />
+                <div>
+                  <span>{error}</span>
+                  {staleError && <button type="button" onClick={() => void refresh()}>Шинэ төлөв татах</button>}
+                </div>
+              </div>
+            )}
 
             {!composerOpen && selected && (
               <>
@@ -326,14 +246,31 @@ export function MissionCanvas() {
 
                 <section className={styles.detailCard}>
                   <div className={styles.sectionTitle}><Inbox size={19} /><div><span>NEEDS YOUR DECISION</span><h2>Owner шийдвэрийн inbox</h2></div></div>
-                  {openDecisions.length === 0 ? <p className={styles.emptyText}>Одоогоор owner-оос шийдвэр шаардах зүйл алга.</p> : openDecisions.map((decision) => <div className={styles.decisionRow} key={decision.decision_id}><CircleDecision /><div><strong>{decision.title}</strong><span>{decision.rationale}</span></div></div>)}
+                  {openDecisions.length === 0 ? <p className={styles.emptyText}>Одоогоор owner-оос шийдвэр шаардах зүйл алга.</p> : openDecisions.map((decision) => (
+                    <div className={styles.decisionCard} key={decision.decision_id}>
+                      <div className={styles.decisionSummary}><CircleDecision /><div><strong>{decision.title}</strong><span>{decision.rationale}</span></div></div>
+                      <textarea
+                        rows={2}
+                        value={decisionNotes[decision.decision_id] ?? ''}
+                        onChange={(event) => setDecisionNotes((current) => ({ ...current, [decision.decision_id]: event.target.value }))}
+                        placeholder="Шийдвэрийн тайлбар (сонголттой)"
+                        maxLength={1000}
+                      />
+                      <div className={styles.decisionActions}>
+                        <button type="button" className={styles.decisionAccept} disabled={Boolean(resolvingDecisionId)} onClick={() => void resolveDecision(decision, 'accepted')}>Зөвшөөрөх</button>
+                        <button type="button" disabled={Boolean(resolvingDecisionId)} onClick={() => void resolveDecision(decision, 'rejected')}>Татгалзах</button>
+                        <button type="button" disabled={Boolean(resolvingDecisionId)} onClick={() => void resolveDecision(decision, 'superseded')}>Хуучирсан</button>
+                        {resolvingDecisionId === decision.decision_id && <LoaderCircle size={17} className={styles.spinning} />}
+                      </div>
+                    </div>
+                  ))}
                 </section>
 
                 <section className={styles.detailCard}>
                   <div className={styles.sectionTitle}><Clock3 size={19} /><div><span>PROGRESS &amp; LEASE</span><h2>Явцын timeline</h2></div></div>
                   <div className={styles.timelineRow}><div className={styles.timelineDot} /><div><strong>Mission үүссэн</strong><span>{formatDate(selected.created_at)}</span></div></div>
-                  {recentOperations.map((operation) => <div className={styles.timelineRow} key={operation.operation_id}><div className={styles.timelineDot} /><div><strong>{operation.kind.replaceAll('_', ' ')}</strong><span>{operation.status} · {formatDate(operation.updated_at)}</span></div></div>)}
-                  <div className={styles.leaseRow}><UserRound size={18} /><div><strong>{selected.writer_lease ? selected.writer_lease.holder_id : 'Идэвхтэй writer байхгүй'}</strong><span>{selected.writer_lease ? `Lease ${formatDate(selected.writer_lease.expires_at)} хүртэл` : 'Дараагийн агент lease авч өөрчлөлт хийнэ.'}</span></div></div>
+                  {recentOperations.map((operation) => <div className={styles.timelineRow} key={operation.operation_id}><div className={styles.timelineDot} /><div><strong>{operationLabel(operation)}</strong><span>{operation.status} · {formatDate(operation.updated_at)}</span></div></div>)}
+                  <div className={styles.leaseRow}><UserRound size={18} /><div><strong>{selected.writer_lease ? selected.writer_lease.holder_id : 'Идэвхтэй writer байхгүй'}</strong><span>{selected.writer_lease ? `Lease ${formatDate(selected.writer_lease.expires_at)} хүртэл · heartbeat ${formatDate(selected.writer_lease.heartbeat_at)}` : 'Дараагийн агент lease авч өөрчлөлт хийнэ.'}</span></div></div>
                 </section>
               </>
             )}
@@ -343,7 +280,7 @@ export function MissionCanvas() {
                 <Target size={26} />
                 <h2>Эхний Mission-оо үүсгэнэ үү</h2>
                 <p>Зорилгоо нэг удаа бичиж, дараагийн AI бүр ижил durable context-оос үргэлжлүүлэх суурь эндээс эхэлнэ.</p>
-                <button type="button" className={styles.primaryButton} onClick={openComposer}><Plus size={18} /> Mission үүсгэх</button>
+                <button type="button" className={styles.primaryButton} onClick={() => setComposerOpen(true)}><Plus size={18} /> Mission үүсгэх</button>
               </section>
             )}
           </>
@@ -351,11 +288,6 @@ export function MissionCanvas() {
       </div>
     </div>
   )
-}
-
-function ProposalList({ title, items }: { title: string; items: string[] }) {
-  if (items.length === 0) return null
-  return <div className={styles.proposalList}><strong>{title}</strong><ul>{items.map((item) => <li key={item}>{item}</li>)}</ul></div>
 }
 
 function CircleDecision() {
