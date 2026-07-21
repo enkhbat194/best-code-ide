@@ -154,7 +154,7 @@
 
 .urlRow {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) max-content;
   align-items: center;
   gap: 10px;
   margin-top: 16px;
@@ -180,7 +180,13 @@
 }
 
 .urlRow button {
-  padding: 12px;
+  display: inline-flex;
+  min-width: 96px;
+  min-height: 48px;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 14px;
+  white-space: nowrap;
 }
 
 .primary,
