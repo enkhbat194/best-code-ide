@@ -1,3 +1,4 @@
+// Phase 2.1D Package B canary marker: non-functional critical-path fixture; do not merge.
 export interface Env {
   DEEPSEEK_API_KEY?: string
   GITHUB_TOKEN: string
