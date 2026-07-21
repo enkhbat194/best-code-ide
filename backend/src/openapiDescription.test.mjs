@@ -4,6 +4,7 @@ import test from 'node:test'
 import { deliveryMcpTools } from './mcpDeliveryTools.ts'
 import { deploymentMcpTools } from './mcpDeploymentTools.ts'
 import { readOnlyMcpTools } from './mcpReadTools.ts'
+import { rollbackMcpTools } from './mcpRollbackTools.ts'
 import { safeWriteMcpTools } from './mcpWriteTools.ts'
 import { openapiSpec } from './openapi.ts'
 import { ACTION_DESCRIPTION_LIMIT, buildActionDescription } from './openapiDescription.ts'
@@ -41,6 +42,7 @@ test('every generated OpenAPI action uses a bounded description', () => {
     ...safeWriteMcpTools,
     ...deliveryMcpTools,
     ...deploymentMcpTools,
+    ...rollbackMcpTools,
     ...projectBrainMcpTools,
   ].map((tool) => tool.name)
   const operations = generatedOperations()
