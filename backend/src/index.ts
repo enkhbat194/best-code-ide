@@ -5,6 +5,7 @@ import { handleFilesCommit } from './files'
 import { handleLlm } from './llm'
 import { handleMaintenance } from './maintenance'
 import { handleMcp } from './mcp'
+import { handleMissionApi } from './missionApi'
 import { openapiSpec } from './openapi'
 import { handleRelease, healthPayload } from './release'
 import { handleRest } from './rest'
@@ -49,9 +50,7 @@ async function isAuthorized(req: Request, env: Env): Promise<boolean> {
 
   const [actualHash, expectedHash] = await Promise.all([digest(token), digest(expected)])
   let difference = 0
-  for (let index = 0; index < expectedHash.length; index += 1) {
-    difference |= actualHash[index] ^ expectedHash[index]
-  }
+  for (let index = 0; index < expectedHash.length; index += 1) difference |= actualHash[index] ^ expectedHash[index]
   return difference === 0
 }
 
@@ -82,18 +81,13 @@ export default {
       return jsonError('Origin is not allowed', 403)
     }
 
-    if (req.method === 'OPTIONS') {
-      return new Response(null, { headers: CORS_HEADERS })
-    }
+    if (req.method === 'OPTIONS') return new Response(null, { headers: CORS_HEADERS })
 
     const requestLimit = requestLimitFor(url, {
       defaultBytes: parsePositiveInteger(resolveSecret(env, 'MAX_REQUEST_BYTES'), DEFAULT_MAX_REQUEST_BYTES),
       chatBytes: parsePositiveInteger(resolveSecret(env, 'MAX_CHAT_REQUEST_BYTES'), DEFAULT_CHAT_REQUEST_BYTES),
       fileBytes: parsePositiveInteger(resolveSecret(env, 'MAX_FILE_REQUEST_BYTES'), DEFAULT_FILE_REQUEST_BYTES),
-      workspaceBytes: parsePositiveInteger(
-        resolveSecret(env, 'MAX_WORKSPACE_REQUEST_BYTES'),
-        DEFAULT_WORKSPACE_REQUEST_BYTES,
-      ),
+      workspaceBytes: parsePositiveInteger(resolveSecret(env, 'MAX_WORKSPACE_REQUEST_BYTES'), DEFAULT_WORKSPACE_REQUEST_BYTES),
     })
     const limitResponse = enforceRequestLimits(req, requestLimit)
     if (limitResponse) {
@@ -107,26 +101,17 @@ export default {
       return response
     }
 
-    if (url.pathname === '/openapi.json' && req.method === 'GET') {
-      return jsonResponse(openapiSpec(url.origin))
-    }
+    if (url.pathname === '/openapi.json' && req.method === 'GET') return jsonResponse(openapiSpec(url.origin))
 
     const authorized = await isAuthorized(req, env)
     const rateProfile = {
       owner: parsePositiveInteger(resolveSecret(env, 'OWNER_RATE_LIMIT_REQUESTS'), DEFAULT_OWNER_RATE_LIMIT),
-      unauthorized: parsePositiveInteger(
-        resolveSecret(env, 'UNAUTHORIZED_RATE_LIMIT_REQUESTS'),
-        DEFAULT_UNAUTHORIZED_RATE_LIMIT,
-      ),
+      unauthorized: parsePositiveInteger(resolveSecret(env, 'UNAUTHORIZED_RATE_LIMIT_REQUESTS'), DEFAULT_UNAUTHORIZED_RATE_LIMIT),
       fallback: parsePositiveInteger(resolveSecret(env, 'RATE_LIMIT_REQUESTS'), DEFAULT_RATE_LIMIT),
       windowMs: parsePositiveInteger(resolveSecret(env, 'RATE_LIMIT_WINDOW_MS'), DEFAULT_RATE_WINDOW_MS),
     }
     const identity = authorized ? 'owner' : 'unauthorized'
-    const rateResponse = enforceRateLimit(
-      `${identity}:${clientRateKey(req)}`,
-      rateLimitForIdentity(authorized, rateProfile),
-      rateProfile.windowMs,
-    )
+    const rateResponse = enforceRateLimit(`${identity}:${clientRateKey(req)}`, rateLimitForIdentity(authorized, rateProfile), rateProfile.windowMs)
     if (rateResponse) {
       audit('rate_limit_rejected', { path: url.pathname, method: req.method, identity, client: clientRateKey(req) })
       return rateResponse
@@ -140,9 +125,13 @@ export default {
     const securityAuditResponse = await handleSecurityAudit(req, env, url)
     if (securityAuditResponse) return securityAuditResponse
 
-    if (url.pathname === '/mcp' && (req.method === 'POST' || req.method === 'GET' || req.method === 'DELETE')) {
-      return handleMcp(req, env)
+    const missionResponse = await handleMissionApi(req, env, url)
+    if (missionResponse) {
+      audit('mission_api', { path: url.pathname, method: req.method, status: missionResponse.status, identity })
+      return missionResponse
     }
+
+    if (url.pathname === '/mcp' && (req.method === 'POST' || req.method === 'GET' || req.method === 'DELETE')) return handleMcp(req, env)
 
     const actionResponse = await handleActions(req, env, url)
     if (actionResponse) return actionResponse
@@ -159,24 +148,15 @@ export default {
     const releaseResponse = await handleRelease(req, env, url)
     if (releaseResponse) return releaseResponse
 
-    if (url.pathname === '/api/llm' && req.method === 'POST') {
-      return handleLlm(req, env)
-    }
+    if (url.pathname === '/api/llm' && req.method === 'POST') return handleLlm(req, env)
 
     if (url.pathname === '/api/chat' && req.method === 'POST') {
-      if (disabledExplicitly(env.ENABLE_LEGACY_AGENT)) {
-        return jsonError('In-app AI agent is disabled by configuration (ENABLE_LEGACY_AGENT=false).', 410)
-      }
+      if (disabledExplicitly(env.ENABLE_LEGACY_AGENT)) return jsonError('In-app AI agent is disabled by configuration (ENABLE_LEGACY_AGENT=false).', 410)
       return handleChat(req, env)
     }
 
-    if (url.pathname === '/api/files/commit' && req.method === 'POST') {
-      return handleFilesCommit(req, env)
-    }
-
-    if (url.pathname === '/api/workspace/export' && req.method === 'POST') {
-      return handleWorkspaceExport(req, env)
-    }
+    if (url.pathname === '/api/files/commit' && req.method === 'POST') return handleFilesCommit(req, env)
+    if (url.pathname === '/api/workspace/export' && req.method === 'POST') return handleWorkspaceExport(req, env)
 
     const restResponse = await handleRest(req, env, url)
     if (restResponse) return restResponse
