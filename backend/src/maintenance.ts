@@ -1,5 +1,6 @@
 import { listApprovals, markSuperseded } from './approvalClient'
 import * as gh from './github'
+import { listMergedPullRequestHeads, mergedPullRequestMatches } from './githubMaintenance'
 import { getProject } from './projects'
 import type { Env } from './types'
 import { jsonError, jsonResponse, resolveSecret } from './utils'
@@ -56,10 +57,28 @@ async function buildPlan(env: Env, projectId: string) {
     }
   }
 
-  const branches = await gh.listBranches(token, project.owner, project.repo, 100)
+  const [branches, mergedPullRequestHeads] = await Promise.all([
+    gh.listBranches(token, project.owner, project.repo, 100),
+    listMergedPullRequestHeads(token, project.owner, project.repo, project.defaultBranch),
+  ])
   const mergedBranches = []
   for (const branch of branches) {
     if (branch.protected || !deletableBranch(branch.name, project.defaultBranch)) continue
+
+    // Squash/rebase merges leave the original branch commits ahead of main even
+    // after GitHub marks the PR merged. An exact merged-PR head SHA is therefore
+    // accepted as equivalent evidence to an ancestry comparison.
+    const pullRequest = mergedPullRequestMatches(branch, mergedPullRequestHeads)
+    if (pullRequest) {
+      mergedBranches.push({
+        name: branch.name,
+        sha: branch.sha,
+        comparison: 'merged_pull_request',
+        pull_request_number: pullRequest.number,
+      })
+      continue
+    }
+
     const comparison = await gh.compareBranchDetails(
       token,
       project.owner,

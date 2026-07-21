@@ -75,6 +75,9 @@ function installGithub(t) {
     if (request.method === 'GET' && url.pathname.endsWith('/branches/agent/missing-context')) {
       return new Response('not found', { status: 404 })
     }
+    if (request.method === 'GET' && url.pathname.endsWith('/pulls')) {
+      return Response.json([])
+    }
     if (request.method === 'GET' && /\/branches\?/.test(url.pathname + url.search)) {
       return Response.json([
         { name: 'main', protected: true, commit: { sha: mainSha } },

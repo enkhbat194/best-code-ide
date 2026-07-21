@@ -42,8 +42,12 @@ export async function handleApprovals(req: Request, env: Env, url: URL): Promise
   if (url.pathname === '/api/approvals' && req.method === 'GET') {
     try {
       const limit = Math.min(Math.max(Number(url.searchParams.get('limit') ?? '50'), 1), 100)
+      const requestedStatus = url.searchParams.get('status')?.trim() || undefined
+      const includeTerminal = url.searchParams.get('include_terminal') === 'true'
       const result = await listApprovals(env, {
-        status: url.searchParams.get('status') ?? undefined,
+        // The mobile approval queue is an action inbox. Terminal history must be
+        // requested explicitly so stale/superseded cards do not look actionable.
+        status: requestedStatus ?? (includeTerminal ? undefined : 'pending_approval'),
         projectId: url.searchParams.get('project_id') ?? undefined,
         limit,
       })
