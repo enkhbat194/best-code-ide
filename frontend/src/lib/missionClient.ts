@@ -88,6 +88,10 @@ export interface MissionIntentDraft {
   intent: string
 }
 
+export interface MissionCreationDraft extends MissionIntentDraft {
+  acceptanceCriteria?: string[]
+}
+
 export class MissionClientError extends Error {
   code: string
 
@@ -138,6 +142,15 @@ export async function getMission(missionId: string): Promise<MissionRecord> {
   return result.mission
 }
 
+async function transitionMission(mission: MissionRecord, lifecycle: string): Promise<MissionRecord> {
+  const result = await action<{ mission: MissionRecord }>('mission_transition', {
+    mission_id: mission.mission_id,
+    expected_context_version: mission.context_version,
+    lifecycle,
+  })
+  return result.mission
+}
+
 async function releaseLease(missionId: string, holderId: string): Promise<MissionRecord> {
   const latest = await getMission(missionId)
   const result = await action<{ mission: MissionRecord }>('mission_lease', {
@@ -149,9 +162,31 @@ async function releaseLease(missionId: string, holderId: string): Promise<Missio
   return result.mission
 }
 
-export async function createMissionFromIntent(draft: MissionIntentDraft): Promise<MissionRecord> {
+async function mutateMission(
+  mission: MissionRecord,
+  holderId: string,
+  leaseId: string,
+  mutation: 'add_goal' | 'add_criterion',
+  idempotencyKey: string,
+  entity: Record<string, unknown>,
+): Promise<MissionRecord> {
+  const result = await action<{ mission: MissionRecord }>('mission_mutate', {
+    mission_id: mission.mission_id,
+    expected_context_version: mission.context_version,
+    holder_id: holderId,
+    lease_id: leaseId,
+    idempotency_key: idempotencyKey,
+    operation_id: crypto.randomUUID(),
+    mutation,
+    entity,
+  })
+  return result.mission
+}
+
+export async function createMissionFromIntent(draft: MissionCreationDraft): Promise<MissionRecord> {
   const title = draft.title.trim()
   const intent = draft.intent.trim()
+  const criteria = [...new Set((draft.acceptanceCriteria ?? []).map((item) => item.trim().slice(0, 180)).filter(Boolean))].slice(0, 4)
   if (!title) throw new MissionClientError('TITLE_REQUIRED', 'Mission нэр оруулна уу.')
   if (!intent) throw new MissionClientError('INTENT_REQUIRED', 'Хүссэн үр дүнгээ тайлбарлана уу.')
 
@@ -166,7 +201,7 @@ export async function createMissionFromIntent(draft: MissionIntentDraft): Promis
     project_id: projectId,
     title: title.slice(0, 300),
   })
-  let mission = created.mission
+  let mission = await transitionMission(created.mission, 'framing')
 
   try {
     const leased = await action<{ mission: MissionRecord }>('mission_lease', {
@@ -175,29 +210,42 @@ export async function createMissionFromIntent(draft: MissionIntentDraft): Promis
       command: 'acquire',
       holder_id: holderId,
       lease_id: leaseId,
-      ttl_seconds: 120,
+      ttl_seconds: 180,
     })
     mission = leased.mission
     leaseAcquired = true
 
-    const mutated = await action<{ mission: MissionRecord }>('mission_mutate', {
-      mission_id: missionId,
-      expected_context_version: mission.context_version,
-      holder_id: holderId,
-      lease_id: leaseId,
-      idempotency_key: `mission.canvas.capture.${missionId}`,
-      operation_id: crypto.randomUUID(),
-      mutation: 'add_goal',
-      entity: {
+    mission = await mutateMission(
+      mission,
+      holderId,
+      leaseId,
+      'add_goal',
+      `mission.canvas.capture.${missionId}`,
+      {
         goal_id: crypto.randomUUID(),
         title: title.slice(0, 300),
         outcome: intent.slice(0, 1000),
       },
-    })
-    mission = mutated.mission
+    )
+
+    for (const [index, statement] of criteria.entries()) {
+      mission = await mutateMission(
+        mission,
+        holderId,
+        leaseId,
+        'add_criterion',
+        `mission.canvas.criterion.${missionId}.${index}`,
+        {
+          criterion_id: crypto.randomUUID(),
+          statement,
+          evidence_ids: [],
+        },
+      )
+    }
+
     mission = await releaseLease(missionId, holderId)
     leaseAcquired = false
-    return mission
+    return transitionMission(mission, 'planned')
   } catch (error) {
     if (leaseAcquired) {
       try {
