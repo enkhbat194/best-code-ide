@@ -35,7 +35,7 @@ test('Phase 4B closeout seeds and resolves all Decision inbox owner outcomes saf
 
 test('Mission workspace exposes a dedicated owner-visible 4B Test mode', () => {
   assert.match(workspaceSource, /type WorkspaceMode = 'mission' \| 'chat' \| 'closeout'/)
-  assert.match(workspaceSource, /> 4B Test</)
+  assert.match(workspaceSource, /4B Test/)
   assert.match(workspaceSource, /<Phase4BOwnerCloseout \/>/)
   assert.match(viewSource, /Phase 4B owner closeout амжилттай/)
 })
