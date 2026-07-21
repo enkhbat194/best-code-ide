@@ -11,7 +11,7 @@ test('generated OpenAPI preserves version, schemas, and bearer authentication', 
   const spec = openapiSpec('https://bestcode.test')
 
   assert.equal(spec.openapi, '3.1.0')
-  assert.equal(spec.info.version, '0.9.0')
+  assert.equal(spec.info.version, '0.11.0')
   assert.deepEqual(spec.security, [{ bearerAuth: [] }])
   assert.deepEqual(spec.components.securitySchemes.bearerAuth, {
     type: 'http',
@@ -52,6 +52,15 @@ test('Project Brain tools share one tagged Actions surface', () => {
     const operation = spec.paths[`/api/actions/${name}`].post
     assert.equal(operation.operationId, name)
     assert.deepEqual(operation.tags, ['Project Brain'])
+  }
+})
+
+test('Mission tools share one tagged Actions surface', () => {
+  const spec = openapiSpec('https://bestcode.test')
+  for (const name of ['mission_create', 'mission_get', 'mission_list', 'mission_transition', 'mission_lease', 'mission_mutate', 'mission_context_packet']) {
+    const operation = spec.paths[`/api/actions/${name}`].post
+    assert.equal(operation.operationId, name)
+    assert.deepEqual(operation.tags, ['Missions'])
   }
 })
 
