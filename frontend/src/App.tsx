@@ -1,6 +1,6 @@
 import { Suspense, lazy, useState } from 'react'
 import { TabBar } from './components/layout/TabBar'
-import { ChatView } from './components/chat/ChatView'
+import { MissionWorkspace } from './components/mission/MissionWorkspace'
 import { FilesView } from './components/files/FilesView'
 import { ChangesView } from './components/changes/ChangesView'
 import { SettingsView } from './components/settings/SettingsView'
@@ -15,7 +15,7 @@ function App() {
 
   return (
     <>
-      {tab === 'chat' && <ChatView />}
+      {tab === 'chat' && <MissionWorkspace />}
       {tab === 'files' && <FilesView />}
       {tab === 'changes' && <ChangesView />}
       {tab === 'preview' && (
