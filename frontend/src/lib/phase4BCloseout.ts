@@ -1,5 +1,5 @@
-import { createMissionFromIntent, getMission, listMissions, resolveMissionDecision, type MissionDecision, type MissionRecord } from './missionClient'
-import { serializeIntentWithReferences, type IntentReference } from './intentCapture'
+import { createMissionFromIntent, getMission, listMissions, type MissionDecision, type MissionRecord } from './missionClient'
+import type { IntentReference } from './intentCapture'
 import { useSettingsStore } from '../store/settingsStore'
 
 interface ActionEnvelope<T> {
@@ -8,28 +8,28 @@ interface ActionEnvelope<T> {
   error?: { code?: string; message?: string; action_required?: string }
 }
 
-export const PHASE4B_CLOSEOUT_TITLE_PREFIX = 'Phase 4B owner closeout canary'
+export const PHASE4B_CLOSEOUT_TITLE_PREFIX = '4B closeout v2'
 
 export const PHASE4B_CLOSEOUT_DECISIONS = [
   {
-    key: 'accept',
-    title: '[4B closeout] Зөвшөөрөх үйлдлийг турших',
+    key: 'a',
+    title: '[4B] Accept',
     expectedStatus: 'accepted' as const,
-    rationale: 'Owner Decision inbox дээр Зөвшөөрөх товчийг production орчинд шалгана.',
+    rationale: '4B accept test',
     buttonLabel: 'Зөвшөөрөх',
   },
   {
-    key: 'reject',
-    title: '[4B closeout] Татгалзах үйлдлийг турших',
+    key: 'r',
+    title: '[4B] Reject',
     expectedStatus: 'rejected' as const,
-    rationale: 'Owner Decision inbox дээр Татгалзах товчийг production орчинд шалгана.',
+    rationale: '4B reject test',
     buttonLabel: 'Татгалзах',
   },
   {
-    key: 'supersede',
-    title: '[4B closeout] Хуучирсан үйлдлийг турших',
+    key: 's',
+    title: '[4B] Supersede',
     expectedStatus: 'superseded' as const,
-    rationale: 'Owner Decision inbox дээр Хуучирсан товчийг production орчинд шалгана.',
+    rationale: '4B supersede test',
     buttonLabel: 'Хуучирсан',
   },
 ] as const
@@ -51,6 +51,22 @@ async function action<T>(name: string, body: Record<string, unknown>): Promise<T
     throw new Error(message)
   }
   return payload.result
+}
+
+function compact(value: string, max: number): string {
+  return value.trim().replace(/\s+/g, ' ').slice(0, max)
+}
+
+function serializeCloseoutReferences(references: IntentReference[]): string {
+  const order = ['image', 'file', 'url'] as const
+  const lines = order.map((kind) => {
+    const reference = references.find((item) => item.kind === kind)
+    if (!reference) throw new Error('Closeout metadata reference дутуу байна.')
+    const type = kind === 'image' ? 'зураг' : kind === 'file' ? 'файл' : 'URL'
+    const detailLimit = kind === 'url' ? 96 : 56
+    return `- ${type}: ${compact(reference.label, 32)} (${compact(reference.detail, detailLimit)})`
+  })
+  return `4B owner closeout (binary хадгалаагүй):\n${lines.join('\n')}`
 }
 
 async function transitionMission(mission: MissionRecord, lifecycle: string): Promise<MissionRecord> {
@@ -96,13 +112,37 @@ async function recordDecision(
     expected_context_version: mission.context_version,
     holder_id: holderId,
     lease_id: leaseId,
-    idempotency_key: `phase4b.closeout.${mission.mission_id}.${spec.key}`,
+    idempotency_key: `p4b.s.${mission.mission_id}.${spec.key}`,
     operation_id: crypto.randomUUID(),
     mutation: 'record_decision',
     entity: {
       decision_id: crypto.randomUUID(),
       title: spec.title,
       rationale: spec.rationale,
+    },
+  })
+  return result.mission
+}
+
+async function resolveDecisionMutation(
+  mission: MissionRecord,
+  holderId: string,
+  leaseId: string,
+  decision: MissionDecision,
+  spec: typeof PHASE4B_CLOSEOUT_DECISIONS[number],
+): Promise<MissionRecord> {
+  const result = await action<{ mission: MissionRecord }>('mission_mutate', {
+    mission_id: mission.mission_id,
+    expected_context_version: mission.context_version,
+    holder_id: holderId,
+    lease_id: leaseId,
+    idempotency_key: `p4b.r.${decision.decision_id}.${spec.key}`,
+    operation_id: crypto.randomUUID(),
+    mutation: 'resolve_decision',
+    entity: {
+      decision_id: decision.decision_id,
+      status: spec.expectedStatus,
+      rationale: `4B ${spec.expectedStatus}`,
     },
   })
   return result.mission
@@ -123,15 +163,8 @@ export async function createPhase4BCloseoutMission(references: IntentReference[]
 
   const mission = await createMissionFromIntent({
     title: `${PHASE4B_CLOSEOUT_TITLE_PREFIX} · ${new Date().toLocaleString('mn-MN')}`,
-    intent: serializeIntentWithReferences(
-      'Installed iOS PWA дээр зураг, файл, URL metadata capture болон Decision inbox-ийн гурван owner үйлдлийг production орчинд баталгаажуулна.',
-      references,
-    ),
-    acceptanceCriteria: [
-      'Зураг, файл, URL metadata Mission Goal-д хадгалагдаж binary агуулга хадгалагдахгүй.',
-      'Decision inbox дээр accepted, rejected, superseded төлөв тус бүр нэг удаа амжилттай хадгалагдана.',
-      'Бүх шийдвэр хаагдсаны дараа writer lease null болж lifecycle planned төлөвт буцна.',
-    ],
+    intent: serializeCloseoutReferences(references),
+    acceptanceCriteria: [],
   })
   return seedPhase4BCloseoutDecisions(mission.mission_id)
 }
@@ -141,7 +174,7 @@ export async function seedPhase4BCloseoutDecisions(missionId: string): Promise<M
   const missing = PHASE4B_CLOSEOUT_DECISIONS.filter((spec) => !mission.decisions.some((decision) => decision.title === spec.title))
   if (missing.length === 0) return mission
 
-  const holderId = `bestcode-phase4b-closeout-${crypto.randomUUID()}`
+  const holderId = `p4b-${crypto.randomUUID()}`
   const leaseId = crypto.randomUUID()
   let leaseAcquired = false
   try {
@@ -172,15 +205,34 @@ export async function resolvePhase4BCloseoutDecision(
   mission: MissionRecord,
   spec: typeof PHASE4B_CLOSEOUT_DECISIONS[number],
 ): Promise<MissionRecord> {
-  const decision = findCloseoutDecision(mission, spec.title)
+  let latest = await getMission(mission.mission_id)
+  const decision = findCloseoutDecision(latest, spec.title)
   if (!decision) throw new Error('Closeout шийдвэр олдсонгүй. Шалгалтын төлөвөө шинэчилнэ үү.')
-  if (decision.status !== 'open') return getMission(mission.mission_id)
-  return resolveMissionDecision(
-    mission.mission_id,
-    decision.decision_id,
-    spec.expectedStatus,
-    `Phase 4B owner closeout: ${spec.buttonLabel} үйлдлийг production дээр баталгаажуулав.`,
-  )
+  if (decision.status !== 'open') return latest
+
+  const holderId = `p4b-${crypto.randomUUID()}`
+  const leaseId = crypto.randomUUID()
+  let leaseAcquired = false
+  try {
+    latest = await acquireLease(latest, holderId, leaseId)
+    leaseAcquired = true
+    latest = await resolveDecisionMutation(latest, holderId, leaseId, decision, spec)
+    latest = await releaseLease(latest.mission_id, holderId)
+    leaseAcquired = false
+    if (latest.lifecycle === 'decision' && latest.decisions.every((item) => item.status !== 'open')) {
+      latest = await transitionMission(latest, 'planned')
+    }
+    return latest
+  } catch (error) {
+    if (leaseAcquired) {
+      try {
+        await releaseLease(latest.mission_id, holderId)
+      } catch {
+        // Preserve the original failure; the lease expires automatically.
+      }
+    }
+    throw error
+  }
 }
 
 export function evaluatePhase4BCloseout(mission: MissionRecord) {
