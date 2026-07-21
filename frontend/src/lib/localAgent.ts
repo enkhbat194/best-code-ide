@@ -16,6 +16,7 @@ export type AgentEvent =
 
 interface RawToolCall {
   id?: string
+  type: 'function'
   function?: { name?: string; arguments?: string }
 }
 
@@ -320,6 +321,7 @@ async function readAssistantStream(
   if (realCalls.length > 0) {
     message.tool_calls = realCalls.map((call, index) => ({
       id: call.id || `call_${index}`,
+      type: 'function',
       function: { name: call.name, arguments: call.arguments },
     }))
   }
