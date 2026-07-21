@@ -4,19 +4,21 @@ import { executeReadOnlyMcpTool, readOnlyMcpTools } from './mcpReadTools'
 import { executeRollbackMcpTool, rollbackMcpTools } from './mcpRollbackTools'
 import { executeSafeWriteMcpTool, safeWriteMcpTools } from './mcpWriteTools'
 import { executeProjectBrainMcpTool, projectBrainMcpTools } from './projectBrainTools'
+import { executeMissionMcpTool, missionMcpTools } from './missionTools'
 import { resolveSecret } from './utils'
 import type { Env } from './types'
 
 const LATEST_PROTOCOL_VERSION = '2025-11-25'
 const SUPPORTED_PROTOCOL_VERSIONS = new Set(['2025-11-25', '2025-06-18', '2025-03-26'])
 const DEFAULT_BROWSER_ORIGINS = ['https://chatgpt.com', 'https://chat.openai.com']
-const ALL_MCP_TOOLS = [...readOnlyMcpTools, ...safeWriteMcpTools, ...deliveryMcpTools, ...deploymentMcpTools, ...rollbackMcpTools, ...projectBrainMcpTools]
+const ALL_MCP_TOOLS = [...readOnlyMcpTools, ...safeWriteMcpTools, ...deliveryMcpTools, ...deploymentMcpTools, ...rollbackMcpTools, ...projectBrainMcpTools, ...missionMcpTools]
 const READ_ONLY_NAMES = new Set<string>(readOnlyMcpTools.map((tool) => tool.name))
 const SAFE_WRITE_NAMES = new Set<string>(safeWriteMcpTools.map((tool) => tool.name))
 const DELIVERY_NAMES = new Set<string>(deliveryMcpTools.map((tool) => tool.name))
 const DEPLOYMENT_NAMES = new Set<string>(deploymentMcpTools.map((tool) => tool.name))
 const ROLLBACK_NAMES = new Set<string>(rollbackMcpTools.map((tool) => tool.name))
 const PROJECT_BRAIN_NAMES = new Set<string>(projectBrainMcpTools.map((tool) => tool.name))
+const MISSION_NAMES = new Set<string>(missionMcpTools.map((tool) => tool.name))
 
 interface JsonRpcMessage {
   jsonrpc: '2.0'
@@ -110,8 +112,8 @@ export async function handleMcp(req: Request, env: Env): Promise<Response> {
       return rpcResponse(message.id, {
         protocolVersion,
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: 'bestcode-repository-controller', title: 'BestCode Repository Controller', version: '0.9.0', description: 'Project-scoped repository controller with shared Project Brain, approval-gated Git delivery, CI tasks, production deployment, and exact rollback requests.' },
-        instructions: 'Use projects_list then project_context_get. Work on agent/<task>, stage coherent changes, wait for owner approval, run CI, and create PRs. Deployment and rollback are separate high-risk approvals. rollback_request never switches traffic.',
+        serverInfo: { name: 'bestcode-repository-controller', title: 'BestCode Repository Controller', version: '0.10.0', description: 'Project-scoped repository controller with durable Missions, shared Project Brain, approval-gated Git delivery, CI tasks, production deployment, and exact rollback requests.' },
+        instructions: 'Use projects_list then project_context_get or mission_get. Work on agent/<task>, stage coherent changes, wait for owner approval, run CI, and create PRs. Mission tools coordinate work but never bypass repository, deployment, or rollback approvals.',
       }, { 'MCP-Protocol-Version': protocolVersion })
     }
     case 'ping': return rpcResponse(message.id, {}, methodHeaders('ping'))
@@ -120,7 +122,7 @@ export async function handleMcp(req: Request, env: Env): Promise<Response> {
       const name = typeof message.params?.name === 'string' ? message.params.name : ''
       const args = message.params?.arguments
       if (!name) return rpcError(message.id, -32602, 'Missing tool name')
-      if (!READ_ONLY_NAMES.has(name) && !SAFE_WRITE_NAMES.has(name) && !DELIVERY_NAMES.has(name) && !DEPLOYMENT_NAMES.has(name) && !ROLLBACK_NAMES.has(name) && !PROJECT_BRAIN_NAMES.has(name)) return rpcError(message.id, -32602, `Unknown MCP tool: ${name}`)
+      if (!READ_ONLY_NAMES.has(name) && !SAFE_WRITE_NAMES.has(name) && !DELIVERY_NAMES.has(name) && !DEPLOYMENT_NAMES.has(name) && !ROLLBACK_NAMES.has(name) && !PROJECT_BRAIN_NAMES.has(name) && !MISSION_NAMES.has(name)) return rpcError(message.id, -32602, `Unknown MCP tool: ${name}`)
       if (args !== undefined && (!args || typeof args !== 'object' || Array.isArray(args))) return rpcError(message.id, -32602, 'Tool arguments must be a JSON object')
       const githubToken = resolveSecret(env, 'GITHUB_TOKEN')
       if (!githubToken) return rpcResponse(message.id, missingGithubTokenResult(), methodHeaders('tools/call', name))
@@ -136,7 +138,9 @@ export async function handleMcp(req: Request, env: Env): Promise<Response> {
               ? await executeDeploymentMcpTool(name, toolArgs, githubToken, env)
               : ROLLBACK_NAMES.has(name)
                 ? await executeRollbackMcpTool(name, toolArgs, githubToken, env)
-                : await executeProjectBrainMcpTool(name, toolArgs, githubToken, env)
+                : PROJECT_BRAIN_NAMES.has(name)
+                  ? await executeProjectBrainMcpTool(name, toolArgs, githubToken, env)
+                  : await executeMissionMcpTool(name, toolArgs, githubToken, env)
       console.log(JSON.stringify({ event: 'mcp_tool_call', tool: name, operation_id: result.structuredContent.operation_id, ok: result.structuredContent.ok, status: result.structuredContent.status, duration_ms: Date.now() - startedAt }))
       return rpcResponse(message.id, result, methodHeaders('tools/call', name))
     }
