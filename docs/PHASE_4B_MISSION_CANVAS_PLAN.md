@@ -1,6 +1,6 @@
 # Phase 4B — Mission Canvas delivery plan
 
-Status: `IN PROGRESS — 4B.1 FOUNDATION IMPLEMENTED`
+Status: `IN PROGRESS — 4B.1 MERGED; 4B.2 IMPLEMENTED`
 
 ## Owner outcome
 
@@ -8,42 +8,47 @@ Owner зорилгоо нэг удаа бичээд durable Mission үүсгэн
 
 ## Delivery packages
 
-### 4B.1 — Canvas shell and text intent capture
+### 4B.1 — Canvas shell and text intent capture — MERGED
 
-Scope:
+Delivered:
 
-- primary mobile tab-ийг `Mission` болгох;
-- Mission Canvas болон existing AI Chat хооронд нэг workspace дотор шилжих;
+- primary mobile tab-ийг `Mission` болгосон;
+- Mission Canvas болон existing AI Chat хооронд нэг workspace дотор шилждэг;
 - durable Mission жагсаах, сонгох, refresh хийх;
 - text intent capture;
-- owner хадгалахаас өмнө яг ямар нэр/үр дүн хадгалагдахыг харуулах;
+- owner хадгалахаас өмнө exact name/outcome confirmation;
 - Mission create → writer lease → initial Goal mutation → lease cleanup;
 - lifecycle, context version/hash, goals, criteria count, open decisions, active tasks, lease болон recent operations snapshot;
 - deterministic provisional “next most valuable action”.
 
-Exit evidence:
+Evidence:
 
-- frontend lint/build green;
-- Test/Validate CI green;
-- installed PWA дээр text intent-ээс Mission үүсч, Goal болон released lease харагдах;
-- existing AI Chat алдагдахгүй.
+- PR #44;
+- Test run `29827166374`: success;
+- Validate run `29827166318`: success;
+- merge SHA `c71230a0571f8333d9c14ba51664df6228073514`.
 
-### 4B.2 — AI framing and done-contract editor
+### 4B.2 — AI framing and done-contract editor — IMPLEMENTED
 
-Scope:
+Delivered in current package:
 
-- owner intent-ийг bounded structured framing request болгох;
-- AI-ийн ойлгосон goal, exclusions, assumptions, risks болон proposed done criteria-г owner-д харуулах;
-- owner edit/accept/reject хийх хүртэл durable Mission-д автоматаар батлахгүй;
+- owner intent-ийг bounded structured DeepSeek framing request болгох;
+- strict JSON extraction and schema validation;
+- AI-ийн ойлгосон title, outcome, assumptions, exclusions, risks болон proposed done criteria-г owner-д харуулах;
+- owner title/outcome/criteria-г edit, remove, add хийх;
+- owner confirmation хүртэл provider proposal durable Mission-д хадгалагдахгүй;
 - accepted criteria-г `mission_mutate:add_criterion`-оор хадгалах;
 - lifecycle `captured → framing → planned` transition;
-- text input-д URL reference metadata нэмэх.
+- create flow-ийн writer lease cleanup;
+- AI unavailable үед explicit manual creation fallback.
 
 Safety:
 
 - AI proposal нь owner confirmation биш;
 - provider raw text-ийг schema validationгүйгээр Mission-д хадгалахгүй;
-- repository/deployment action эхлүүлэхгүй.
+- criteria 2–4, item бүр 180 тэмдэгтээр bounded;
+- repository/deployment/rollback action эхлүүлэхгүй;
+- DeepSeek secret browser руу гарахгүй, existing authenticated `/api/llm` proxy ашиглана.
 
 ### 4B.3 — Multimodal capture, timeline and decision inbox
 
@@ -51,8 +56,8 @@ Scope:
 
 - voice transcription capture;
 - image/file attachment metadata capture;
-- bounded URL capture;
-- task/operation progress timeline;
+- bounded URL reference capture;
+- task/operation progress timeline-г action grouping болон status copy-оор сайжруулах;
 - active agent/role/writer lease heartbeat display;
 - open Decision inbox;
 - decision accept/reject/supersede mutation UX;
@@ -88,4 +93,4 @@ Exit evidence:
 
 ## Current package boundary
 
-4B.1 нь text capture болон Canvas foundation. Энэ package AI framing, criteria mutation editor, voice/image/file/URL ingestion эсвэл decision mutation-ийг дууссан гэж тэмдэглэхгүй. Тэдгээрийг 4B.2–4B.4 багцаар дараалан хэрэгжүүлнэ.
+4B.2 нь AI framing болон creation-time done-contract editor. Voice/image/file/URL ingestion, existing Mission criteria mutation editor, decision mutation, cross-provider handoff болон Phase 4B closeout-г дууссан гэж тэмдэглэхгүй. Тэдгээрийг 4B.3–4B.4 багцаар хэрэгжүүлнэ.
