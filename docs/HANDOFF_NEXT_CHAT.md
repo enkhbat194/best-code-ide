@@ -23,7 +23,7 @@ Chat transcript нь canonical memory биш.
   - 2.1A source lock/rollback: COMPLETED
   - 2.1B approval/idempotency: implemented; owner observation evidence тусдаа
   - 2.1C auth/rate/redaction/audit: MERGED
-  - 2.1D critical-path protection: current package
+  - 2.1D critical-path protection: MERGED; production smoke/closeout evidence pending verification
 - Phase 3 Mobile Trust UX & Release Control
 - Phase 4 Mission Control & Second Brain v2
 - Phase 5 Web Research Agent v1
@@ -32,31 +32,28 @@ Chat transcript нь canonical memory биш.
 
 ## 3. Энэ chat-д дууссан зүйл
 
-### PR #24
+### PR #24 — Canonical roadmap lock
 
-- Canonical roadmap decision merged.
+- Merged.
 - Merge SHA: `c0adb915af800c59fb0e5f3bac9a66e7a253a83c`.
 
-### PR #25
+### PR #25 — Phase 2.1C Security Floor
 
-- Phase 2.1C security floor merged.
+- Merged.
 - Merge SHA: `4ab43a0ddb756b63c9bdcdc32a2e04dc4d1be7a3`.
 - Delivered request-size envelopes, redaction, owner/unauthorized rate profiles, origin policy, persistent security audit/export, runbooks and tests.
 
-### Phase 2.1D final clean branch
+### PR #27 — Phase 2.1D Critical Path Protection
 
-- Branch: `agent/phase-2-1d-critical-path-final`
-- Base: current `main`
-- Supersedes dirty stacked PR #26 branch history.
-- Files:
-  - `.github/workflows/critical-path-conformance.yml`
-  - `backend/src/criticalPaths.ts`
-  - `backend/src/criticalPaths.test.mjs`
-  - `backend/src/approvalClient.ts`
-  - `docs/PHASE_2_1D_CRITICAL_PATH_PROTECTION.md`
-  - `docs/HANDOFF_NEXT_CHAT.md`
+- Merged.
+- Merge SHA: `c9a0ccce3053567a04092f7add6569ae01ff6cea`.
+- CI before merge:
+  - Test: success
+  - Validate: success
+  - Critical Path Conformance: success
+- Superseded stacked PR #26, which was closed without merge.
 
-Implementation:
+Delivered:
 
 - `BC-R31` canonical source
 - `BC-R32` security/auth
@@ -68,25 +65,26 @@ Implementation:
 - critical staged changes become `risk: high`
 - exact `critical_path:BC-Rxx` and `critical_path_file:<path>` reasons are stored
 - ordinary staged changes preserve existing risk
+- `.github/workflows/critical-path-conformance.yml`
+- `docs/PHASE_2_1D_CRITICAL_PATH_PROTECTION.md`
 
 ## 4. Шинэ chat эхлэх яг дараалал
 
-1. Current `main`, final Phase 2.1D PR, CI, mergeability-г шалга.
-2. CI унасан бол logs уншаад branch дээр зас.
-3. Green `Test`, `Validate`, `Critical Path Conformance` шаардана.
-4. Exact head SHA ашиглан merge хий. Owner энэ chat-д finish/deploy хийх explicit approval өгсөн.
-5. Main deployment/source smoke:
+1. Current GitHub `main` SHA болон production deployment source/version-ийг шалга.
+2. Production smoke:
    - `/health`
    - `/api/release`
    - `/openapi.json`
    - protected endpoint unauthorized `401`
    - authenticated `/api/security/audit`
-6. Canary staging smoke:
+3. Canary staging smoke:
    - ordinary file → normal risk
    - critical file → high risk + exact `BC-Rxx` reasons
    - canary operation-ийг deliver хийхгүй; reject/cancel/expire цэвэрлэ.
-7. Deployment evidence ба Phase 2.1D closeout-ийг `docs/PROJECT_STATUS.md` болон decision/status record-д тусдаа branch/PR-аар оруул.
-8. Phase 3A эхлүүл.
+4. Smoke/evidence бүтэн бол Phase 2.1D closeout-ийг `docs/PROJECT_STATUS.md`, `docs/ROADMAP.md` болон decision/status record-д тусдаа branch/PR-аар оруул.
+5. Phase 3A Version/update contract эхлүүл.
+
+Production deploy болсон гэж provider evidence-гүй зарлахгүй. Merge нь хийгдсэн; Cloudflare auto-deploy болон live source verification-ийг шинэ chat эхлэхэд хамгийн түрүүнд баталгаажуул.
 
 ## 5. Phase 3A эхний багц
 
