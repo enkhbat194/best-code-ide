@@ -4,6 +4,7 @@ import { getReleaseIntegrity, type ReleaseIntegrity, type ReleaseIntegrityStatus
 import { clientRelease, shortSha } from '../../lib/release'
 import { useSettingsStore } from '../../store/settingsStore'
 import { MaintenanceCenter } from './MaintenanceCenter'
+import { MissionSmokeCard } from './MissionSmokeCard'
 import { RollbackRequestCard } from './RollbackRequestCard'
 import { TrustHistoryCard } from './TrustHistoryCard'
 import { UpdateStatusCard } from './UpdateStatusCard'
@@ -101,6 +102,7 @@ export function SettingsView() {
       </section>
 
       <UpdateStatusCard backendSchema={backendSchema} backendSha={release?.repository.main_sha} />
+      <MissionSmokeCard />
       <TrustHistoryCard />
       <RollbackRequestCard />
       <MaintenanceCenter />
