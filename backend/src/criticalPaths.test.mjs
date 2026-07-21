@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  applyCriticalPathRisk,
   classifyCriticalPath,
   classifyCriticalPaths,
   criticalPathPolicyError,
@@ -51,4 +52,36 @@ test('policy error names exact rules and paths', () => {
   assert.match(error ?? '', /BC-R33/)
   assert.match(error ?? '', /docs\/ROADMAP\.md/)
   assert.equal(criticalPathPolicyError(classifyCriticalPaths(['frontend/src/App.tsx'])), null)
+})
+
+test('critical staged changes are automatically promoted to high risk', () => {
+  const operation = {
+    risk: 'normal',
+    risk_reasons: ['file_deletion'],
+    changes: [
+      { path: 'frontend/src/App.tsx' },
+      { path: '.github/workflows/deploy.yml' },
+      { path: 'docs/ROADMAP.md' },
+    ],
+  }
+  applyCriticalPathRisk(operation)
+  assert.equal(operation.risk, 'high')
+  assert.deepEqual(operation.risk_reasons, [
+    'file_deletion',
+    'critical_path:BC-R33',
+    'critical_path_file:.github/workflows/deploy.yml',
+    'critical_path:BC-R31',
+    'critical_path_file:docs/ROADMAP.md',
+  ])
+})
+
+test('ordinary staged changes preserve their existing risk and reasons', () => {
+  const operation = {
+    risk: 'normal',
+    risk_reasons: [],
+    changes: [{ path: 'frontend/src/App.tsx' }],
+  }
+  applyCriticalPathRisk(operation)
+  assert.equal(operation.risk, 'normal')
+  assert.deepEqual(operation.risk_reasons, [])
 })
