@@ -20,8 +20,10 @@ import {
   type MissionOperation,
   type MissionRecord,
 } from '../../lib/missionClient'
+import { deriveMissionNextAction } from '../../lib/missionNextAction'
 import { useSettingsStore } from '../../store/settingsStore'
 import { MissionComposer } from './MissionComposer'
+import { MissionHandoffCard } from './MissionHandoffCard'
 import styles from './MissionCanvas.module.css'
 
 function formatDate(value: string): string {
@@ -48,17 +50,6 @@ function lifecycleLabel(value: string): string {
     failed: 'Алдаатай зогссон',
   }
   return labels[value] ?? value
-}
-
-function nextAction(mission: MissionRecord): string {
-  const openDecision = mission.decisions.find((item) => item.status === 'open')
-  if (openDecision) return `Owner шийдвэр: ${openDecision.title}`
-  const activeTask = mission.tasks.find((item) => ['ready', 'running', 'waiting', 'blocked'].includes(item.status))
-  if (activeTask) return activeTask.title
-  if (mission.goals.length === 0) return 'Mission-ийн зорилго, хүссэн үр дүнг баталгаажуулах'
-  if (mission.acceptance_criteria.length === 0) return 'Дууссан гэж тооцох шалгууруудыг нэмэх'
-  if (mission.lifecycle === 'captured') return 'Ойлголтыг тодруулж framing төлөвт оруулах'
-  return 'Одоогийн төлөвөөс хамгийн үнэ цэнтэй дараагийн ажлыг төлөвлөх'
 }
 
 function operationLabel(operation: MissionOperation): string {
@@ -121,6 +112,7 @@ export function MissionCanvas() {
   const openDecisions = useMemo(() => selected?.decisions.filter((item) => item.status === 'open') ?? [], [selected])
   const activeTasks = useMemo(() => selected?.tasks.filter((item) => !['completed', 'cancelled', 'failed'].includes(item.status)) ?? [], [selected])
   const recentOperations = useMemo(() => [...(selected?.operations ?? [])].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 7), [selected])
+  const nextAction = useMemo(() => selected ? deriveMissionNextAction(selected) : null, [selected])
   const staleError = /context version mismatch|active writer lease|held by/i.test(error)
 
   async function selectMission(missionId: string) {
@@ -212,14 +204,19 @@ export function MissionCanvas() {
               </div>
             )}
 
-            {!composerOpen && selected && (
+            {!composerOpen && selected && nextAction && (
               <>
                 <section className={styles.heroCard}>
                   <div className={styles.heroTop}>
                     <div><span className={styles.lifecycle}>{lifecycleLabel(selected.lifecycle)}</span><h2>{selected.title}</h2></div>
                     <Target size={26} />
                   </div>
-                  <div className={styles.nextAction}><span>Дараагийн хамгийн үнэ цэнтэй алхам</span><strong>{nextAction(selected)}</strong><ChevronRight size={18} /></div>
+                  <div className={styles.nextAction}>
+                    <span>Дараагийн хамгийн үнэ цэнтэй алхам</span>
+                    <strong>{nextAction.title}</strong>
+                    <small>{nextAction.reason}</small>
+                    <ChevronRight size={18} />
+                  </div>
                   <div className={styles.metaGrid}>
                     <div><span>Context</span><strong>v{selected.context_version}</strong></div>
                     <div><span>Hash</span><strong>{shortHash(selected.context_hash)}</strong></div>
@@ -249,13 +246,7 @@ export function MissionCanvas() {
                   {openDecisions.length === 0 ? <p className={styles.emptyText}>Одоогоор owner-оос шийдвэр шаардах зүйл алга.</p> : openDecisions.map((decision) => (
                     <div className={styles.decisionCard} key={decision.decision_id}>
                       <div className={styles.decisionSummary}><CircleDecision /><div><strong>{decision.title}</strong><span>{decision.rationale}</span></div></div>
-                      <textarea
-                        rows={2}
-                        value={decisionNotes[decision.decision_id] ?? ''}
-                        onChange={(event) => setDecisionNotes((current) => ({ ...current, [decision.decision_id]: event.target.value }))}
-                        placeholder="Шийдвэрийн тайлбар (сонголттой)"
-                        maxLength={1000}
-                      />
+                      <textarea rows={2} value={decisionNotes[decision.decision_id] ?? ''} onChange={(event) => setDecisionNotes((current) => ({ ...current, [decision.decision_id]: event.target.value }))} placeholder="Шийдвэрийн тайлбар (сонголттой)" maxLength={1000} />
                       <div className={styles.decisionActions}>
                         <button type="button" className={styles.decisionAccept} disabled={Boolean(resolvingDecisionId)} onClick={() => void resolveDecision(decision, 'accepted')}>Зөвшөөрөх</button>
                         <button type="button" disabled={Boolean(resolvingDecisionId)} onClick={() => void resolveDecision(decision, 'rejected')}>Татгалзах</button>
@@ -272,6 +263,8 @@ export function MissionCanvas() {
                   {recentOperations.map((operation) => <div className={styles.timelineRow} key={operation.operation_id}><div className={styles.timelineDot} /><div><strong>{operationLabel(operation)}</strong><span>{operation.status} · {formatDate(operation.updated_at)}</span></div></div>)}
                   <div className={styles.leaseRow}><UserRound size={18} /><div><strong>{selected.writer_lease ? selected.writer_lease.holder_id : 'Идэвхтэй writer байхгүй'}</strong><span>{selected.writer_lease ? `Lease ${formatDate(selected.writer_lease.expires_at)} хүртэл · heartbeat ${formatDate(selected.writer_lease.heartbeat_at)}` : 'Дараагийн агент lease авч өөрчлөлт хийнэ.'}</span></div></div>
                 </section>
+
+                <MissionHandoffCard mission={selected} nextAction={nextAction} />
               </>
             )}
 

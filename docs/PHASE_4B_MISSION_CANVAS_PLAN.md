@@ -1,6 +1,6 @@
 # Phase 4B — Mission Canvas delivery plan
 
-Status: `IN PROGRESS — 4B.1–4B.2 MERGED; 4B.3 IMPLEMENTED`
+Status: `IN PROGRESS — 4B.1–4B.3 MERGED; 4B.4 IMPLEMENTED; OWNER SMOKE PENDING`
 
 ## Owner outcome
 
@@ -57,9 +57,9 @@ Safety:
 - repository/deployment/rollback action эхлүүлэхгүй;
 - DeepSeek secret browser руу гарахгүй, existing authenticated `/api/llm` proxy ашиглана.
 
-### 4B.3 — Multimodal capture, timeline and decision inbox — IMPLEMENTED
+### 4B.3 — Multimodal capture, timeline and decision inbox — MERGED
 
-Delivered in current package:
+Delivered:
 
 - iOS/browser Web Speech API боломжтой үед Mongolian voice transcription;
 - Web Speech байхгүй үед keyboard microphone/text fallback тайлбар;
@@ -75,6 +75,13 @@ Delivered in current package:
 - бүх open decision хаагдаж lifecycle `decision` байвал `planned` руу буцаана;
 - context mismatch/lease conflict үед “Шинэ төлөв татах” recovery UX.
 
+Evidence:
+
+- PR #46;
+- Test run `29828294827`: success;
+- Validate run `29828294857`: success;
+- merge SHA `d8e7b435843d5589b7cd61f09d23d51f41934e51`.
+
 Safety:
 
 - microphone болон file picker зөвхөн user gesture-ээр эхэлнэ;
@@ -83,28 +90,46 @@ Safety:
 - owner decision бүр active writer lease, optimistic context version, idempotency key ашиглана;
 - repository write, deployment, rollback эсвэл production traffic action эхлүүлэхгүй.
 
-### 4B.4 — Next-action engine and closeout
+### 4B.4 — Next-action engine, handoff and verification — IMPLEMENTED
 
-Scope:
+Delivered in current package:
 
-- lifecycle, decisions, criteria, dependencies, task priority болон lease state-аас next most valuable action тодорхойлох;
-- owner decision шаардлагатай үед autonomous work зогсоох;
-- Context Packet copy/export/provider handoff;
-- ChatGPT/Claude/DeepSeek resume dogfood test;
-- installed PWA verification card;
-- Phase 4B closeout decision/evidence.
+- deterministic next-action policy engine;
+- open owner decision үед autonomous continuation fail-closed;
+- active writer lease үед second writer wait action;
+- Goal/done-contract missing, running/blocked/ready task, verifying, completed/package states-ийн тайлбартай action;
+- task dependency болон priority-aware selection;
+- provider-neutral `mission-context-packet-v1` татах UI;
+- Context Packet clipboard copy болон JSON export;
+- DeepSeek resume-readiness check нь tool executionгүйгээр packet sufficient эсэхийг structured JSON-оор шалгана;
+- ChatGPT/Claude нь existing authenticated `mission_context_packet` MCP/Actions tool-оор copy/pasteгүй авах contract-тай;
+- Mission identity, context version/hash, goal/criteria, decision safety, next action, writer lease visibility шалгах owner-visible Phase 4B smoke card;
+- deterministic policy unit tests.
 
-Exit evidence:
+Safety:
 
-1. owner text/voice/image/file/URL-аас intent capture хийнэ;
-2. AI understanding-ийг owner edit/confirm хийнэ;
-3. done criteria durable хадгалагдана;
-4. timeline, agent/lease, decision inbox нэг дэлгэцэд харагдана;
-5. next action тайлбартай харагдана;
-6. өөр AI Context Packet-аас copy/pasteгүй үргэлжлүүлнэ;
-7. stale context болон second writer fail closed;
-8. installed iOS PWA owner smoke passed.
+- next-action engine өөрөө tool execute хийхгүй;
+- open Decision байхад action `blocked=true`, `ownerRequired=true`;
+- DeepSeek resume check repository/deployment/payment/destructive action хийхгүй read-only evaluation;
+- packet export нь current bounded Mission data;
+- external provider handoff current context version/hash-ийг заавал хэрэглэнэ.
+
+## Verification and closeout gate
+
+Implementation merge хийсний дараа installed iOS PWA дээр owner дараахыг шалгана:
+
+1. `Mission` tab болон `AI Chat` switch харагдана;
+2. text intent + AI framing-аар Mission үүсгэнэ;
+3. 2–4 done criteria durable харагдана;
+4. voice болон file/image/URL metadata capture UI ажиллана;
+5. open Decision байвал next action blocked болох ба owner шийдвэр гаргаж чадна;
+6. Context Packet version/hash Mission card-тай таарна;
+7. DeepSeek resume check packet-оос summary/next action гаргана;
+8. `Phase 4B smoke test ажиллуулах` бүх мөр ногоон болно;
+9. ChatGPT эсвэл Claude MCP-ээр тухайн Mission-ийн packet-ийг нэр/ID ашиглан унших cross-provider dogfood хийнэ.
+
+Owner screenshot + cross-provider dogfood evidence гарсны дараа тусдаа docs-only closeout PR-аар Phase 4B-г `COMPLETED` болгоно.
 
 ## Current package boundary
 
-4B.3 multimodal metadata capture болон owner decision inbox-ийг хэрэгжүүлсэн. Binary asset vault, existing Mission-ийн criteria editor, provider-neutral executable handoff, full next-action policy engine, installed-PWA closeout smoke-г дууссан гэж тэмдэглэхгүй. Эдгээрийн Phase 4B-д хамаарах хэсгийг 4B.4 багцаар хэрэгжүүлнэ; asset binary/storage нь Phase 4D/Asset Graph хүрээнд байна.
+4B.4 implementation хийсэн боловч production deploy, installed-PWA owner smoke болон ChatGPT/Claude бодит resume dogfood хараахан баталгаажаагүй. Иймээс Phase 4B-г одоогоор бүрэн хаасан гэж тэмдэглэхгүй. Binary asset vault/storage нь Phase 4D/Asset Graph хүрээнд хэвээр.
