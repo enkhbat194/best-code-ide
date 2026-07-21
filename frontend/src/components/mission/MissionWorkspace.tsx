@@ -1,11 +1,12 @@
 import { useState } from 'react'
-import { Bot, Target } from 'lucide-react'
+import { Bot, ShieldCheck, Target } from 'lucide-react'
 import { ChatView } from '../chat/ChatView'
 import { MissionCanvas } from './MissionCanvas'
+import { Phase4BOwnerCloseout } from './Phase4BOwnerCloseout'
 import './MissionEnhancements.css'
 import styles from './MissionCanvas.module.css'
 
-type WorkspaceMode = 'mission' | 'chat'
+type WorkspaceMode = 'mission' | 'chat' | 'closeout'
 
 export function MissionWorkspace() {
   const [mode, setMode] = useState<WorkspaceMode>('mission')
@@ -19,8 +20,11 @@ export function MissionWorkspace() {
         <button className={mode === 'chat' ? styles.modeActive : ''} onClick={() => setMode('chat')} role="tab" aria-selected={mode === 'chat'}>
           <Bot size={16} /> AI Chat
         </button>
+        <button className={mode === 'closeout' ? styles.modeActive : ''} onClick={() => setMode('closeout')} role="tab" aria-selected={mode === 'closeout'}>
+          <ShieldCheck size={16} /> 4B Test
+        </button>
       </div>
-      {mode === 'mission' ? <MissionCanvas /> : <ChatView />}
+      {mode === 'mission' ? <MissionCanvas /> : mode === 'chat' ? <ChatView /> : <Phase4BOwnerCloseout />}
     </div>
   )
 }
