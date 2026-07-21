@@ -5,13 +5,14 @@ import { missionMcpTools } from './missionTools.ts'
 
 const names = missionMcpTools.map((tool) => tool.name)
 
-test('Mission MCP exposes the locked Phase 4A.3 tool set', () => {
+test('Mission MCP exposes the locked Phase 4A.4 tool set', () => {
   assert.deepEqual(names, [
     'mission_create',
     'mission_get',
     'mission_list',
     'mission_transition',
     'mission_lease',
+    'mission_mutate',
     'mission_context_packet',
   ])
 })
