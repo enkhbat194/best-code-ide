@@ -132,7 +132,8 @@
   white-space: nowrap;
 }
 
-.reloadButton {
+.reloadButton,
+.smokeButton {
   display: inline-flex;
   width: 100%;
   align-items: center;
@@ -147,8 +148,65 @@
   font-weight: 700;
 }
 
-.reloadButton:disabled {
+.smokeButton {
+  border-color: rgba(129, 140, 248, 0.45);
+  color: #c7d2fe;
+  background: rgba(99, 102, 241, 0.12);
+}
+
+.reloadButton:disabled,
+.smokeButton:disabled {
   opacity: 0.65;
+}
+
+.smokeSteps {
+  display: grid;
+  gap: 1px;
+  margin-top: 14px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--border);
+}
+
+.smokeStep {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  padding: 11px 12px;
+  background: rgba(11, 13, 18, 0.9);
+}
+
+.smokeStep strong,
+.smokeStep span {
+  display: block;
+}
+
+.smokeStep strong {
+  margin-bottom: 3px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.smokeStep span {
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.stepPass {
+  color: var(--success);
+}
+
+.stepFail {
+  color: var(--danger);
+}
+
+.stepPending {
+  color: var(--text-dim);
 }
 
 .releaseMeta {
