@@ -7,9 +7,13 @@ compatibility_date = "2024-11-01"
 #   AUTH_TOKEN                Bearer token required by PWA, REST, and MCP requests
 #   PROJECTS_JSON             Project registry with optional workflows, previewUrl, and memoryPaths
 #   MCP_ALLOWED_ORIGINS       Optional comma-separated trusted browser origins
+#   CORS_ALLOWED_ORIGINS      Optional comma-separated browser origin allowlist
 #   DEEPSEEK_API_KEY          Optional legacy in-app agent key
 #   ENABLE_LEGACY_AGENT       Optional; set true only to restore /api/chat
 #   ENABLE_LEGACY_REST_WRITES Optional; set true only to restore direct legacy REST writes
+#   MAX_*_REQUEST_BYTES       Optional per-route request envelope overrides
+#   *_RATE_LIMIT_REQUESTS     Optional owner/unauthorized request ceilings
+#   RATE_LIMIT_WINDOW_MS      Optional rate-limit window override
 #
 # Example PROJECTS_JSON shape:
 # [{"id":"bestcode","name":"BestCode PWA","owner":"enkhbat194","repo":"best-code-ide","defaultBranch":"main","buildWorkflow":"validate.yml","testWorkflow":"test.yml","memoryPaths":["BESTCODE_MASTER.md","docs/PROJECT_STATUS.md","docs/ARCHITECTURE.md","docs/ROADMAP.md","docs/RESEARCH_POLICY.md","docs/EVIDENCE_STANDARD.md","docs/THREAT_MODEL.md","docs/PRODUCT_BENCHMARK.md","docs/DECISIONS/README.md","docs/DECISIONS/0001-project-brain-and-ai-roles.md","docs/DECISIONS/0002-personal-creation-os.md","README.md"]}]
@@ -18,9 +22,17 @@ compatibility_date = "2024-11-01"
 name = "APPROVALS"
 class_name = "ApprovalStore"
 
+[[durable_objects.bindings]]
+name = "SECURITY_AUDIT"
+class_name = "SecurityAuditStore"
+
 [[migrations]]
 tag = "approval-store-v1"
 new_sqlite_classes = ["ApprovalStore"]
+
+[[migrations]]
+tag = "security-audit-store-v1"
+new_sqlite_classes = ["SecurityAuditStore"]
 
 [observability]
 enabled = true
