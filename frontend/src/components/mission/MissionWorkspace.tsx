@@ -4,6 +4,7 @@ import { ChatView } from '../chat/ChatView'
 import { MissionCanvas } from './MissionCanvas'
 import { Phase4BOwnerCloseout } from './Phase4BOwnerCloseout'
 import './MissionEnhancements.css'
+import './Phase4BOwnerCloseoutTabs.css'
 import styles from './MissionCanvas.module.css'
 
 type WorkspaceMode = 'mission' | 'chat' | 'closeout'
