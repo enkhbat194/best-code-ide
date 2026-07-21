@@ -1,4 +1,5 @@
 import type { ApprovalOperation, TaskRecord } from './approvalStore'
+import { applyCriticalPathRisk } from './criticalPaths'
 import type { Env } from './types'
 
 function stub(env: Env): DurableObjectStub {
@@ -17,6 +18,7 @@ async function request<T>(env: Env, path: string, init: RequestInit = {}): Promi
 }
 
 export async function createApproval(env: Env, operation: ApprovalOperation): Promise<ApprovalOperation> {
+  applyCriticalPathRisk(operation)
   return request<ApprovalOperation>(env, '/operations', { method: 'POST', body: JSON.stringify(operation) })
 }
 
@@ -77,7 +79,6 @@ export async function markCommitPrepared(
 export async function markPushed(env: Env, operationId: string): Promise<ApprovalOperation> {
   return request<ApprovalOperation>(env, `/operations/${encodeURIComponent(operationId)}/pushed`, { method: 'POST' })
 }
-
 
 export async function markCompleted(env: Env, operationId: string): Promise<ApprovalOperation> {
   return request<ApprovalOperation>(env, `/operations/${encodeURIComponent(operationId)}/completed`, { method: 'POST' })
