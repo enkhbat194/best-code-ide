@@ -1,0 +1,165 @@
+/* Phase 4B.3 elements use structural selectors so the base CSS module remains isolated. */
+
+div:has(> label > input[type="file"]) {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+div:has(> label > input[type="file"]) > button,
+div:has(> label > input[type="file"]) > label {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  color: var(--text-dim);
+  background: rgba(20, 22, 29, 0.82);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+div:has(> label > input[type="file"]) > label input {
+  display: none;
+}
+
+div:has(> input[inputmode="url"]) {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) 38px;
+  align-items: center;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+div:has(> input[inputmode="url"]) > svg {
+  color: var(--text-dim);
+}
+
+div:has(> input[inputmode="url"]) > input {
+  margin: 0;
+  min-width: 0;
+}
+
+div:has(> input[inputmode="url"]) > button {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 1px solid rgba(129, 140, 248, 0.35);
+  border-radius: 10px;
+  color: #c7d2fe;
+  background: rgba(99, 102, 241, 0.12);
+}
+
+div:has(> div > button[aria-label="Лавлагаа хасах"]) {
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(8, 10, 15, 0.62);
+}
+
+div:has(> div > button[aria-label="Лавлагаа хасах"]) > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+div:has(> button[aria-label="Лавлагаа хасах"]) {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 32px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+
+div:has(> button[aria-label="Лавлагаа хасах"]) strong,
+div:has(> button[aria-label="Лавлагаа хасах"]) span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+div:has(> button[aria-label="Лавлагаа хасах"]) strong {
+  font-size: 11px;
+}
+
+div:has(> button[aria-label="Лавлагаа хасах"]) span {
+  margin-top: 2px;
+  color: var(--text-dim);
+  font-size: 9.5px;
+}
+
+div:has(> button[aria-label="Лавлагаа хасах"]) > button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 0;
+  color: var(--text-dim);
+  background: transparent;
+}
+
+div:has(> textarea[placeholder="Шийдвэрийн тайлбар (сонголттой)"]) {
+  margin-top: 10px;
+  padding: 11px;
+  border: 1px solid rgba(251, 191, 36, 0.22);
+  border-radius: 12px;
+  background: rgba(251, 191, 36, 0.04);
+}
+
+div:has(> textarea[placeholder="Шийдвэрийн тайлбар (сонголттой)"]) > div:first-child {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 9px;
+}
+
+div:has(> textarea[placeholder="Шийдвэрийн тайлбар (сонголттой)"]) textarea {
+  width: 100%;
+  margin-top: 9px;
+  padding: 9px 10px;
+  border-radius: 9px;
+  font-size: 11px;
+  resize: vertical;
+}
+
+div:has(> textarea[placeholder="Шийдвэрийн тайлбар (сонголттой)"]) > div:last-child {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+div:has(> textarea[placeholder="Шийдвэрийн тайлбар (сонголттой)"]) > div:last-child button {
+  min-height: 34px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text-dim);
+  background: rgba(20, 22, 29, 0.82);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+div:has(> textarea[placeholder="Шийдвэрийн тайлбар (сонголттой)"]) > div:last-child button:first-child {
+  border-color: rgba(74, 222, 128, 0.35);
+  color: var(--success);
+  background: rgba(74, 222, 128, 0.08);
+}
+
+@media (max-width: 390px) {
+  div:has(> label > input[type="file"]) {
+    grid-template-columns: 1fr;
+  }
+}
