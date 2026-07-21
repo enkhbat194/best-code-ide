@@ -44,7 +44,7 @@ export function ChatView() {
         {messages.length === 0 && (
           <div className={styles.empty}>
             {configured
-              ? 'Даалгавраа бичээрэй — жишээ нь "hello.html үүсгээд hello world харуул". Файлууд Files tab-д үүсэж, Preview tab-аар шууд ажиллана. GitHub руу зөвхөн "push хий" гэсэн үед л илгээнэ.'
+              ? 'Mission ID өгвөл durable context packet-ийг backend-ээс read-only уншина. Мөн local workspace-д файл үүсгэж Preview tab-аар ажиллуулна; GitHub руу зөвхөн “push хий” гэсэн үед илгээнэ.'
               : 'Эхлээд Settings tab-с backend URL болон token-оо тохируулна уу.'}
           </div>
         )}
@@ -73,7 +73,7 @@ export function ChatView() {
         <textarea
           rows={1}
           value={text}
-          placeholder="Repository дээр хийх ажлаа бичих..."
+          placeholder="Mission ID эсвэл хийх ажлаа бичих..."
           onChange={(event) => setText(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter' && !event.shiftKey) {

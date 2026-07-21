@@ -1,5 +1,6 @@
 import * as vfs from './fs'
 import { commitFile } from './backend'
+import { executeMissionAgentTool, MISSION_AGENT_TOOL_SCHEMAS } from './missionAgentTools'
 import { importGitHubWorkspace } from './workspace'
 import { useFsStore } from '../store/fsStore'
 import { useSettingsStore } from '../store/settingsStore'
@@ -97,6 +98,7 @@ const TOOL_SCHEMAS = [
       },
     },
   },
+  ...MISSION_AGENT_TOOL_SCHEMAS,
 ]
 
 function normalizeLocalPath(value: unknown): string {
@@ -112,6 +114,9 @@ async function refreshFiles(): Promise<void> {
 }
 
 async function executeLocalTool(name: string, args: Record<string, unknown>): Promise<string> {
+  const missionResult = await executeMissionAgentTool(name, args)
+  if (missionResult !== null) return missionResult
+
   switch (name) {
     case 'list_files': {
       const entries = await vfs.listTree('/')
@@ -173,6 +178,10 @@ function systemPrompt(): string {
     `operate on this local workspace only — writing a file makes it appear in the Files tab immediately and ` +
     `does NOT touch GitHub. The configured GitHub repository is ${repoLine}; use pull_from_github / ` +
     `push_to_github ONLY when the user explicitly asks to sync or push. ` +
+    `BestCode Mission Canvas records are durable backend objects, not local files and not GitHub documents. ` +
+    `When the user provides a Mission ID or asks to inspect, resume, summarize, verify, or hand off a Mission, ` +
+    `use mission_context_packet first; use mission_get for the full record and mission_list only when an ID is unknown. ` +
+    `These Mission tools are read-only. Never ask where a Mission file is when a Mission ID is available. ` +
     `When the user asks for a program, write the file(s) locally and tell them to open the Preview tab to run it. ` +
     `The Preview tab can run: (1) .html / .js / .jsx / .ts / .tsx in the browser — npm packages like react work, ` +
     `they load automatically from esm.sh, so you can write a real React app (an index.html with a module script, ` +
