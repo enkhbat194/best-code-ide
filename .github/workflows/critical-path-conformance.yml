@@ -1,0 +1,45 @@
+name: Critical Path Conformance
+
+on:
+  pull_request:
+    paths:
+      - 'BESTCODE_MASTER.md'
+      - 'docs/ROADMAP.md'
+      - 'docs/PROJECT_STATUS.md'
+      - 'docs/ARCHITECTURE.md'
+      - 'docs/DECISIONS/**'
+      - 'backend/src/security*'
+      - 'backend/src/auth*'
+      - 'backend/src/types.ts'
+      - '.github/workflows/**'
+      - '**/wrangler.toml'
+      - '**/package.json'
+      - '**/package-lock.json'
+      - '**/pnpm-lock.yaml'
+      - '**/yarn.lock'
+      - '**/tsconfig.json'
+      - '**/vite.config.ts'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+      - name: Run critical path tests
+        working-directory: backend
+        run: node --import tsx --test src/criticalPaths.test.mjs
+      - name: Typecheck backend
+        working-directory: backend
+        run: npm run typecheck
