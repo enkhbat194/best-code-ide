@@ -91,13 +91,13 @@ test('Package B ordinary canary remains normal and is cancelled without delivery
 
 test('Package B critical canary becomes high risk with exact rule/path and is superseded without delivery', async () => {
   const { store } = harness()
-  const staged = operation('docs/ROADMAP.md')
+  const staged = operation('backend/src/types.ts')
   applyCriticalPathRisk(staged)
 
   assert.equal(staged.risk, 'high')
   assert.deepEqual(staged.risk_reasons, [
-    'critical_path:BC-R31',
-    'critical_path_file:docs/ROADMAP.md',
+    'critical_path:BC-R32',
+    'critical_path_file:backend/src/types.ts',
   ])
   assert.equal((await create(store, staged)).status, 201)
 
