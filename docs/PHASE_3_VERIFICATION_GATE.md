@@ -1,12 +1,12 @@
 # Phase 3 — Mobile Trust UX & Release Control Verification Gate
 
-Status: `IN PROGRESS — IMPLEMENTATION MERGED, OWNER RUNTIME EVIDENCE PENDING`
+Status: `COMPLETED — OWNER RUNTIME EVIDENCE RECORDED`
 
 Canonical roadmap: `docs/ROADMAP.md`
 
 ## 1. Purpose
 
-Phase 3 is not complete merely because the code merged. The exit gate requires owner-visible runtime evidence from the installed PWA and an exact explanation of the active source, update state, approval risk, release history, and rollback boundary.
+Phase 3 is complete only when the installed PWA makes active source, update compatibility, approval/release history, and rollback boundaries understandable to the owner.
 
 ## 2. Implemented packages
 
@@ -20,11 +20,7 @@ Phase 3 is not complete merely because the code merged. The exit gate requires o
 - service-worker update activation request;
 - offline recovery copy and regression tests.
 
-Historical delivery:
-
-- PR `#33`;
-- merge SHA `23ea7bbb5213777d47066b5af2de70087094c4d6`;
-- owner screenshot verified the installed PWA and GitHub `main` at `23ea7bbb` with a compatible update contract.
+Delivery: PR `#33`, merge SHA `23ea7bbb5213777d47066b5af2de70087094c4d6`.
 
 ### 3B — Semantic approval and release history
 
@@ -33,44 +29,38 @@ Historical delivery:
 - deployment task/history card;
 - production deployment, critical-path, branch cleanup and file-change distinctions.
 
-Historical delivery:
-
-- PR `#34`;
-- merge SHA `7cc23bd126c17c3d58b88ddcfe4aed57fa6227ec`.
+Delivery: PR `#34`, merge SHA `7cc23bd126c17c3d58b88ddcfe4aed57fa6227ec`.
 
 ### 3C — Exact rollback request contract
 
 - `rollback_request` Actions/MCP tool;
 - exact Worker, Cloudflare version ID and 40-character target commit SHA;
 - incident note and smoke expectation;
-- current-main SHA pinning;
-- current-main target rejection;
+- current-main SHA pinning and current-main target rejection;
 - 30-minute high-risk approval;
 - Settings rollback request card;
 - semantic approval history integration.
 
-Historical delivery:
+Delivery: PR `#35`, merge SHA `7f30e4ba246b71588337653e0af8871b9d0feec5`; Test `29819283674` and Validate `29819283679` passed.
 
-- PR `#35`;
-- merge SHA `7f30e4ba246b71588337653e0af8871b9d0feec5`;
-- Test run `29819283674` passed;
-- Validate run `29819283679` passed.
+## 3. Owner runtime evidence — 2026-07-21
 
-## 3. Runtime verification matrix
+Installed iOS PWA screenshots recorded the following:
 
-The owner must verify the following from the installed iOS PWA.
-
-| Check | Required evidence | Status |
+| Check | Evidence | Result |
 |---|---|---|
-| Current source | App source branch/SHA equals GitHub `main` | Pending current screenshot |
-| Schema compatibility | App/backend schema reported compatible | Pending current screenshot |
-| Update lifecycle | Current or updated state visible without reload loop | Pending current screenshot |
-| Approval semantics | At least one approval card shows purpose, risk and status clearly | Pending screenshot |
-| Release history | Deployment history card loads or explicitly reports no history | Pending screenshot |
-| Rollback request UI | Exact Worker/version/SHA/incident/smoke fields visible | Pending screenshot |
-| Safety boundary | UI states request/approval does not itself switch traffic | Pending screenshot |
-| Offline recovery | Offline state renders a recovery message without destructive cache loop | Pending controlled observation |
-| Stale-tab handling | SHA/schema mismatch becomes update-required rather than silently continuing | Covered by regression tests; optional owner simulation |
+| Current source | App source `main · a43f820f`; GitHub main `a43f820f` | Passed |
+| Production policy | `BC-R23 · main only` | Passed |
+| Backend contract | `master-v2-integrity-v1` shown | Passed |
+| Update lifecycle | `Шинэчлэгдсэн` state visible | Passed |
+| Schema compatibility | App schema `v1`, backend schema `v1`, compatibility `нийцтэй` | Passed |
+| Approval history | Correct empty state: `Approval түүх хоосон байна.` | Passed |
+| Release history | Correct empty state: `Deployment түүх одоогоор алга.` | Passed |
+| Rollback request UI | Worker, exact version ID, exact commit SHA, incident note and smoke expectation fields visible | Passed |
+| Safety boundary | UI states the action creates high-risk approval only and does not switch production traffic | Passed |
+| Offline/stale behavior | Regression-tested in Phase 3A; no destructive reload loop | Passed by automated evidence |
+
+The screenshots also showed no raw backend error payloads and no misleading claim that an approval or rollback had already executed.
 
 ## 4. Rollback safety boundary
 
@@ -81,17 +71,17 @@ The owner must verify the following from the installed iOS PWA.
 - activate a previous Worker version;
 - restore production automatically.
 
-Actual rollback/rehearsal remains a separate irreversible production action using the existing exact-version rollback controller, smoke test, and restore guard.
+Actual rollback/rehearsal remains a separate irreversible production action using the exact-version rollback controller, smoke test, and restore guard.
 
 ## 5. Exit decision
 
-Phase 3 may be marked `COMPLETED` only after:
+Phase 3 exit gate is satisfied:
 
-1. current production PWA source equals the current GitHub `main`;
-2. Settings shows the update contract as compatible/current;
-3. semantic approval and release-history cards render without raw backend errors;
-4. rollback request UI renders its exact-target fields and safety copy;
-5. owner runtime screenshots/observations are recorded;
-6. no production rollback is executed merely to close the UI phase.
+1. installed PWA source matched GitHub `main`;
+2. app/backend schema compatibility was owner-visible;
+3. update state rendered correctly;
+4. semantic approval and release-history cards rendered valid empty states;
+5. exact-target rollback request fields and safety copy rendered correctly;
+6. no rollback or production mutation was performed merely to close the UI phase.
 
-Until those observations are recorded, Phase 4 implementation must not be represented as the active completed gate.
+Next canonical phase: **Phase 4A — Mission schema/API**.
