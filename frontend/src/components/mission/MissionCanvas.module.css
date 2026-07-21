@@ -210,6 +210,147 @@
   min-height: 116px;
 }
 
+.aiButton {
+  display: inline-flex;
+  width: 100%;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid rgba(129, 140, 248, 0.48);
+  border-radius: 12px;
+  color: #e0e7ff;
+  background: rgba(99, 102, 241, 0.16);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.aiButton:disabled {
+  opacity: 0.5;
+}
+
+.proposalCard {
+  margin-top: 14px;
+  padding: 13px;
+  border: 1px solid rgba(129, 140, 248, 0.35);
+  border-radius: 14px;
+  background: rgba(13, 15, 24, 0.82);
+}
+
+.proposalHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.proposalHeader span {
+  color: #a5b4fc;
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+
+.proposalHeader h3 {
+  margin: 3px 0 0;
+  font-size: 15px;
+}
+
+.proposalHeader button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text-dim);
+  background: rgba(20, 22, 29, 0.85);
+  font-size: 10px;
+}
+
+.proposalList {
+  margin-top: 12px;
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: rgba(8, 10, 15, 0.62);
+}
+
+.proposalList strong {
+  font-size: 10.5px;
+}
+
+.proposalList ul {
+  margin: 7px 0 0;
+  padding-left: 17px;
+  color: var(--text-dim);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.criteriaEditor {
+  margin-top: 13px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.criteriaEditorTitle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.criteriaEditorTitle strong {
+  font-size: 11.5px;
+}
+
+.criteriaEditorTitle span {
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.criteriaEditRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 38px;
+  align-items: end;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.criteriaEditRow input {
+  margin-top: 0;
+  font-size: 11.5px;
+}
+
+.criteriaEditRow button {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 1px solid rgba(248, 113, 113, 0.25);
+  border-radius: 10px;
+  color: var(--danger);
+  background: rgba(248, 113, 113, 0.07);
+}
+
+.addCriterion {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 9px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text-dim);
+  background: rgba(20, 22, 29, 0.75);
+  font-size: 10.5px;
+}
+
 .confirmation {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr);
@@ -273,7 +414,8 @@
   background: rgba(20, 22, 29, 0.8);
 }
 
-.primaryButton:disabled {
+.primaryButton:disabled,
+.secondaryButton:disabled {
   opacity: 0.5;
 }
 
