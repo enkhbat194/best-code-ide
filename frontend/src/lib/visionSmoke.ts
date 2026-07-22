@@ -119,7 +119,7 @@ export async function runVisionOwnerSmokeTest(): Promise<VisionSmokeReport> {
     activeKey = 'fixture'
     const file = await canaryFile()
     const sha256 = await hashFileSha256(file)
-    const requestedAssetId = `asset:vision-smoke:${sha256.slice(0, 20)}`
+    const requestedAssetId = `asset-vision-smoke-${sha256.slice(0, 20)}`
     updateStep(steps, 'fixture', 'passed', `${file.name} · ${file.size} bytes · ${short(sha256)}`)
 
     activeKey = 'private_upload'
