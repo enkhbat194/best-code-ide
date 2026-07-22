@@ -34,6 +34,12 @@ export interface AssetMultipartOptions extends AssetIntegrity {
   filename: string
 }
 
+export interface AssetHttpMetadata {
+  contentType: string
+  contentDisposition: string
+  cacheControl: string
+}
+
 export interface AssetStoredObject extends AssetIntegrity {
   provider: string
   access: typeof ASSET_STORAGE_ACCESS
@@ -99,7 +105,7 @@ export function buildAssetContentDisposition(filename: string): string {
   return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(safe)}`
 }
 
-export function privateAssetHttpMetadata(mediaType: string, filename: string): R2HTTPMetadata {
+export function privateAssetHttpMetadata(mediaType: string, filename: string): AssetHttpMetadata {
   const metadata = normalizeAssetWriteMetadata({ mediaType, filename })
   return {
     contentType: metadata.mediaType,
