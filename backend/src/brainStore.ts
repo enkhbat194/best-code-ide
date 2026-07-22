@@ -1,3 +1,13 @@
+import {
+  assetReferenceSummary,
+  buildAssetManifest,
+  cleanupAssetRelations,
+  deleteBrainRelation,
+  linkAsset,
+  putBrainRelationIdempotent,
+  unlinkAssetRelation,
+} from './assetLifecycle'
+import { assetFromBrainObject } from './assetSchema'
 import { handleAssetStore } from './assetStore'
 import {
   isBrainObjectKind,
@@ -33,6 +43,10 @@ function eventKey(event: Pick<BrainEvent, 'project_id' | 'occurred_at' | 'event_
   return `brain-event:${event.project_id}:${event.occurred_at}:${event.event_id}`
 }
 
+function eventIdentityKey(event: Pick<BrainEvent, 'project_id' | 'event_id'>): string {
+  return `brain-event-id:${event.project_id}:${event.event_id}`
+}
+
 function validIdentifier(value: string | null): value is string {
   return value !== null && /^[A-Za-z0-9._:-]{3,64}$/.test(value)
 }
@@ -45,6 +59,15 @@ function boundedLimit(value: string | null, fallback: number, max: number): numb
 
 function isExpired(object: BrainObject, now = Date.now()): boolean {
   return object.retention === 'until' && object.expires_at !== null && Date.parse(object.expires_at) <= now
+}
+
+function isDeletedAsset(object: BrainObject): boolean {
+  if (object.kind !== 'asset') return false
+  try {
+    return assetFromBrainObject(object).upload_status === 'deleted'
+  } catch {
+    return true
+  }
 }
 
 export class BrainStore {
@@ -63,6 +86,16 @@ export class BrainStore {
       return null
     }
     return object
+  }
+
+  private async readAsset(assetId: string) {
+    const object = await this.readObject(assetId)
+    if (!object || object.kind !== 'asset') return null
+    try {
+      return assetFromBrainObject(object)
+    } catch {
+      return null
+    }
   }
 
   private async listObjects(url: URL): Promise<Response> {
@@ -100,13 +133,23 @@ export class BrainStore {
       this.state.storage.list<BrainEvent>({ prefix: `brain-event:${projectId}:` }),
     ])
     const liveObjects = [...objects.values()].filter((object) => !isExpired(object))
+    const objectMap = new Map(liveObjects.map((object) => [object.object_id, object]))
+    const liveRelations = [...relations.values()].filter((relation) => {
+      const from = objectMap.get(relation.from_object_id)
+      const to = objectMap.get(relation.to_object_id)
+      const implicitProject = relation.relation_type === 'belongs_to_project' && relation.to_object_id === projectId
+      return Boolean(from && !isDeletedAsset(from) && ((to && !isDeletedAsset(to)) || implicitProject))
+    })
+    const danglingRelationshipCount = relations.size - liveRelations.length
     return json({
       schema: 'brain-export-v2',
       project_id: projectId,
       exported_at: new Date().toISOString(),
       objects: liveObjects,
-      relations: [...relations.values()],
+      relations: liveRelations,
       events: [...events.values()].sort((a, b) => Date.parse(a.occurred_at) - Date.parse(b.occurred_at)),
+      asset_manifest: buildAssetManifest(liveObjects, liveRelations),
+      cleanup: { dangling_relationship_count: danglingRelationshipCount },
     })
   }
 
@@ -117,6 +160,29 @@ export class BrainStore {
     try {
       const assetResponse = await handleAssetStore(request, this.state, (objectId) => this.readObject(objectId))
       if (assetResponse) return assetResponse
+
+      if (segments[0] === 'assets' && segments[1]) {
+        const assetId = segments[1]
+        if (!validIdentifier(assetId)) return json({ error: 'Invalid asset id' }, 400)
+        const asset = await this.readAsset(assetId)
+        if (!asset) return json({ error: 'Asset not found' }, 404)
+
+        if (request.method === 'POST' && segments[2] === 'links' && segments.length === 3) {
+          const result = await linkAsset(this.state, asset, await request.json().catch(() => null), (objectId) => this.readObject(objectId))
+          return json(result, result.created ? 201 : 200)
+        }
+        if (request.method === 'DELETE' && segments[2] === 'links' && segments[3]) {
+          const actorId = url.searchParams.get('actor_id') ?? 'owner'
+          const result = await unlinkAssetRelation(this.state, asset, segments[3], actorId)
+          return json(result)
+        }
+        if (request.method === 'GET' && segments[2] === 'references' && segments.length === 3) {
+          return json(await assetReferenceSummary(this.state, asset))
+        }
+        if (request.method === 'POST' && segments[2] === 'cleanup' && segments.length === 3) {
+          return json(await cleanupAssetRelations(this.state, asset, (objectId) => this.readObject(objectId)))
+        }
+      }
 
       if (request.method === 'POST' && url.pathname === '/objects') {
         const object = normalizeBrainObjectCreate(await request.json().catch(() => null))
@@ -154,10 +220,17 @@ export class BrainStore {
         if (from.project_id !== relation.project_id || to.project_id !== relation.project_id) {
           return json({ error: 'Relation objects must belong to the same project' }, 409)
         }
-        const key = relationKey(relation)
-        if (await this.state.storage.get(key)) return json({ error: 'Brain relation already exists' }, 409)
-        await this.state.storage.put(key, relation)
-        return json(relation, 201)
+        const result = await putBrainRelationIdempotent(this.state, relation)
+        return json(result.relation, result.created ? 201 : 200)
+      }
+
+      if (request.method === 'DELETE' && segments[0] === 'relations' && segments[1]) {
+        const projectId = url.searchParams.get('project_id')
+        if (!validIdentifier(projectId)) return json({ error: 'A valid project_id is required' }, 400)
+        const relation = await this.state.storage.get<BrainRelation>(relationKey({ project_id: projectId, relation_id: segments[1] }))
+        if (!relation) return json({ deleted: false, idempotent: true })
+        await deleteBrainRelation(this.state, relation)
+        return json({ relation, deleted: true, idempotent: false })
       }
 
       if (request.method === 'GET' && url.pathname === '/relations') {
@@ -180,9 +253,16 @@ export class BrainStore {
           const object = await this.readObject(event.object_id)
           if (!object || object.project_id !== event.project_id) return json({ error: 'Event object must exist in the same project' }, 409)
         }
+        const identityKey = eventIdentityKey(event)
+        const existingKey = await this.state.storage.get<string>(identityKey)
+        if (existingKey) {
+          const existing = await this.state.storage.get<BrainEvent>(existingKey)
+          if (existing) return json(existing)
+          await this.state.storage.delete(identityKey)
+        }
         const key = eventKey(event)
-        if (await this.state.storage.get(key)) return json(event)
         await this.state.storage.put(key, event)
+        await this.state.storage.put(identityKey, key)
         return json(event, 201)
       }
 
