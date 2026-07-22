@@ -9,6 +9,12 @@ on:
       - '.github/workflows/r2-production-infrastructure.yml'
       - 'scripts/cloudflare-r2-production-infrastructure.mjs'
       - 'scripts/cloudflare-r2-production-infrastructure.test.mjs'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/r2-production-infrastructure.yml'
+      - 'scripts/cloudflare-r2-production-infrastructure.mjs'
+      - 'scripts/cloudflare-r2-production-infrastructure.test.mjs'
 
 permissions:
   contents: read
@@ -20,7 +26,7 @@ concurrency:
 jobs:
   provision:
     name: Disable backend previews and ensure R2 bucket
-    if: ${{ github.repository == 'enkhbat194/best-code-ide' }}
+    if: ${{ github.repository == 'enkhbat194/best-code-ide' && (github.event_name != 'pull_request' || github.head_ref == 'agent/r2-production-infrastructure') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: production
