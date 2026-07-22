@@ -148,6 +148,8 @@ export async function applyR2ProductionInfrastructure(options) {
     throw new Error(`Refusing to delete unknown backend triggers; found ${before.unknown.length}`)
   }
 
+  const bucketResult = await ensureBucket(options)
+
   const deleted = []
   for (const trigger of before.preview) {
     if (!trigger.trigger_uuid) throw new Error('Backend preview trigger is missing trigger_uuid')
@@ -165,7 +167,6 @@ export async function applyR2ProductionInfrastructure(options) {
     throw new Error('Backend preview trigger disable verification failed closed')
   }
 
-  const bucketResult = await ensureBucket(options)
   return {
     evidence_id: `ev_r2_infra_${boundedText(options.runId, 80) || Date.now()}`,
     schema_version: 1,
