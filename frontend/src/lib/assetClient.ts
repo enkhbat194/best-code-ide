@@ -1,5 +1,10 @@
 import { useSettingsStore } from '../store/settingsStore'
-import type { ChatAttachmentReference } from '../types'
+import type {
+  AssetProcessingStatus,
+  ChatAttachmentReference,
+  ProcessingJobReference,
+  ProcessingResultReference,
+} from '../types'
 import { normalizeAttachmentMediaType } from './chatAttachmentPolicy'
 
 interface ActionEnvelope<T> {
@@ -22,7 +27,7 @@ export interface AssetMetadata {
   size_bytes: number
   sha256: string
   upload_status: 'pending' | 'uploading' | 'stored' | 'failed' | 'deleted'
-  processing_status: ChatAttachmentReference['processing_status']
+  processing_status: AssetProcessingStatus
   version: number
 }
 
@@ -42,6 +47,23 @@ export interface AssetReferenceSummary {
   by_type: Record<string, number>
 }
 
+export interface AssetProcessingState {
+  asset: AssetMetadata
+  status: AssetProcessingStatus
+  job: ProcessingJobReference | null
+  idempotent?: boolean
+  cached?: boolean
+  result_object_id?: string | null
+  error?: { code: string }
+}
+
+export interface AssetProcessingResultState {
+  asset: AssetMetadata
+  job: ProcessingJobReference
+  result: ProcessingResultReference
+  result_object_id: string
+}
+
 interface AssetUploadResult {
   asset: AssetMetadata
   created: boolean
@@ -56,14 +78,42 @@ function connection() {
   return settings
 }
 
+const PROCESSING_ERROR_LABELS: Record<string, string> = {
+  vision_provider_not_configured: 'Vision provider тохируулаагүй байна.',
+  unsupported_media_type: 'Энэ файлын төрөл image processor-д дэмжигдэхгүй байна.',
+  animated_image_unsupported: 'Animated зураг одоогоор дэмжигдэхгүй байна.',
+  image_size_policy_exceeded: 'Зургийн файл processing хэмжээнээс их байна.',
+  image_dimensions_policy_exceeded: 'Зургийн өргөн, өндөр эсвэл нийт pixel processing хязгаараас их байна.',
+  image_signature_mismatch: 'Файлын бодит image format нь MIME төрөлтэй тохирохгүй байна.',
+  image_mime_mismatch: 'Зургийн MIME болон binary format таарсангүй.',
+  sha256_mismatch: 'Private storage дахь файлын SHA-256 таарсангүй.',
+  r2_mime_mismatch: 'Private storage дахь MIME metadata таарсангүй.',
+  r2_size_mismatch: 'Private storage дахь файлын хэмжээ таарсангүй.',
+  provider_timeout: 'Vision provider хугацаандаа хариулсангүй.',
+  provider_failure: 'Vision provider processing хийхэд алдаа гарлаа.',
+  cross_project_access_denied: 'Өөр project-ийн Asset-д хандахыг хориглов.',
+  processing_result_not_ready: 'Processing result хараахан бэлэн биш байна.',
+}
+
+export function processingErrorLabel(code: string | null | undefined): string {
+  if (!code) return 'Attachment processing амжилтгүй.'
+  return PROCESSING_ERROR_LABELS[code] ?? `Attachment processing амжилтгүй: ${code}`
+}
+
 async function errorMessage(response: Response, fallback: string): Promise<string> {
   const payload = await response.json().catch(() => null) as { error?: unknown } | null
-  const raw = typeof payload?.error === 'string' ? payload.error : ''
+  const raw = typeof payload?.error === 'string'
+    ? payload.error
+    : payload?.error && typeof payload.error === 'object' && 'code' in payload.error
+      ? String((payload.error as { code?: unknown }).code ?? '')
+      : ''
   if (response.status === 401) return 'Нэвтрэх token буруу эсвэл хугацаа дууссан байна.'
+  if (response.status === 403 && raw === 'cross_project_access_denied') return processingErrorLabel(raw)
   if (response.status === 403) return 'Энэ хүсэлтэд permission хүрэхгүй эсвэл app origin зөвшөөрөгдөөгүй байна.'
   if (response.status === 409 && /referenced/i.test(raw)) return 'Файл өөр идэвхтэй холбоостой тул аюулгүй байдлын үүднээс устгасангүй.'
   if (response.status === 409 && /upload.*progress/i.test(raw)) return 'Энэ Asset-ийн upload өөр хүсэлтээр үргэлжилж байна. Дараа нь дахин оролдоно уу.'
   if (response.status === 413) return 'Файл server-ийн зөвшөөрсөн хэмжээнээс их байна.'
+  if ([400, 409, 415, 422, 502, 503, 504].includes(response.status) && raw) return processingErrorLabel(raw)
   if (response.status === 415) return 'Файлын MIME төрөл server-ийн бодлоготой тохирохгүй байна.'
   if (response.status === 422) return 'Файлын хэмжээ эсвэл SHA-256 integrity шалгалт таарсангүй.'
   return raw.trim() || `${fallback} (${response.status})`
@@ -217,6 +267,32 @@ export async function linkAssetToMission(assetId: string, missionId: string): Pr
       },
     }),
   })
+}
+
+export async function processAsset(assetId: string, projectId: string): Promise<AssetProcessingState> {
+  return jsonRequest<AssetProcessingState>(`/api/brain/assets/${encodeURIComponent(assetId)}/process`, {
+    method: 'POST',
+    body: JSON.stringify({ project_id: projectId }),
+  })
+}
+
+export async function retryAssetProcessing(assetId: string, projectId: string): Promise<AssetProcessingState> {
+  return jsonRequest<AssetProcessingState>(`/api/brain/assets/${encodeURIComponent(assetId)}/process/retry`, {
+    method: 'POST',
+    body: JSON.stringify({ project_id: projectId }),
+  })
+}
+
+export async function getAssetProcessing(assetId: string, projectId: string): Promise<AssetProcessingState> {
+  return jsonRequest<AssetProcessingState>(
+    `/api/brain/assets/${encodeURIComponent(assetId)}/processing?project_id=${encodeURIComponent(projectId)}`,
+  )
+}
+
+export async function getAssetProcessingResult(assetId: string, projectId: string): Promise<AssetProcessingResultState> {
+  return jsonRequest<AssetProcessingResultState>(
+    `/api/brain/assets/${encodeURIComponent(assetId)}/processing/result?project_id=${encodeURIComponent(projectId)}`,
+  )
 }
 
 export function toChatAttachmentReference(asset: AssetMetadata, missionId: string | null = asset.mission_id): ChatAttachmentReference {
