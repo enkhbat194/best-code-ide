@@ -1,6 +1,7 @@
 import { handleActions } from './actions'
 import { handleApprovals } from './approvals'
 import { handleAssetBinaryApi } from './assetBinaryApi'
+import { handleAssetProcessingApi } from './assetProcessingApi'
 import { handleBrainApi } from './brainApi'
 import { handleChat } from './chat'
 import { handleFilesCommit } from './files'
@@ -129,6 +130,12 @@ export default {
 
     const securityAuditResponse = await handleSecurityAudit(req, env, url)
     if (securityAuditResponse) return securityAuditResponse
+
+    const assetProcessingResponse = await handleAssetProcessingApi(req, env, url)
+    if (assetProcessingResponse) {
+      audit('asset_processing_api', { path: url.pathname, method: req.method, status: assetProcessingResponse.status, identity })
+      return withCors(assetProcessingResponse)
+    }
 
     const assetBinaryResponse = await handleAssetBinaryApi(req, env, url)
     if (assetBinaryResponse) {
