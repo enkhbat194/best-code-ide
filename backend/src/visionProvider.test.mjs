@@ -9,6 +9,10 @@ import {
   resolveVisionProcessor,
 } from './visionProcessor.ts'
 
+const visionSmokeSource = await readFile(new URL('../../frontend/src/lib/visionSmoke.ts', import.meta.url), 'utf8')
+const visionSmokeCardSource = await readFile(new URL('../../frontend/src/components/settings/VisionSmokeCard.tsx', import.meta.url), 'utf8')
+const settingsViewSource = await readFile(new URL('../../frontend/src/components/settings/SettingsView.tsx', import.meta.url), 'utf8')
+
 const png = Uint8Array.from([
   137, 80, 78, 71, 13, 10, 26, 10,
   0, 0, 0, 13, 73, 72, 68, 82,
@@ -98,4 +102,21 @@ test('Wrangler enables the private Workers AI binding without adding provider se
   assert.match(wrangler, /VISION_PROCESSOR_MODE = "workers-ai"/)
   assert.match(wrangler, /VISION_PROCESSOR_VERSION = "2026-07-08\.prompt-v1"/)
   assert.doesNotMatch(wrangler, /r2\.dev|custom_domain|CLOUDFLARE_API_TOKEN\s*=/i)
+})
+
+test('installed PWA exposes a deterministic owner-visible private image recognition smoke test', () => {
+  assert.match(visionSmokeSource, /BESTCODE-VISION-7264/)
+  assert.match(visionSmokeSource, /asset:vision-smoke:/)
+  assert.match(visionSmokeSource, /registerChatAsset/)
+  assert.match(visionSmokeSource, /uploadAssetContent/)
+  assert.match(visionSmokeSource, /processAsset/)
+  assert.match(visionSmokeSource, /retryAssetProcessing/)
+  assert.match(visionSmokeSource, /getAssetProcessingResult/)
+  assert.match(visionSmokeSource, /cloudflare-workers-ai-moondream3\.1/)
+  assert.match(visionSmokeSource, /source_checksum !== sha256/)
+  assert.match(visionSmokeSource, /derived_interpretation !== true/)
+  assert.match(visionSmokeSource, /extracted_text_untrusted !== true/)
+  assert.match(visionSmokeCardSource, /Image recognition smoke test ажиллуулах/)
+  assert.match(visionSmokeCardSource, /Chat 6 owner image recognition амжилттай/)
+  assert.match(settingsViewSource, /<VisionSmokeCard \/>/)
 })
