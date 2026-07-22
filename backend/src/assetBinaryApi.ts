@@ -31,16 +31,21 @@ async function responseError(response: Response, fallback: string): Promise<Asse
   const body = await response.json().catch(() => null) as { error?: unknown } | null
   const message = typeof body?.error === 'string' && body.error.trim() ? body.error.trim() : fallback
   if (response.status === 404) return new AssetBinaryHttpError(404, message)
-  if (/version mismatch|invalid upload status transition|already exists|conflict/i.test(message)) {
+  if (/version mismatch|invalid upload status transition|already exists|conflict|reference/i.test(message)) {
     return new AssetBinaryHttpError(409, message)
   }
   if (response.status >= 400 && response.status < 500) return new AssetBinaryHttpError(response.status, message)
   return new AssetBinaryHttpError(502, message)
 }
 
+async function brainRequest(env: Env, path: string, init?: RequestInit, fallback = 'Brain request failed'): Promise<Response> {
+  const response = await brainStub(env).fetch(new Request(`https://brain-store${path}`, init))
+  if (!response.ok) throw await responseError(response, fallback)
+  return response
+}
+
 async function readAsset(env: Env, assetId: string): Promise<AssetMetadata> {
-  const response = await brainStub(env).fetch(new Request(`https://brain-store/assets/${encodeURIComponent(assetId)}`))
-  if (!response.ok) throw await responseError(response, 'Asset metadata read failed')
+  const response = await brainRequest(env, `/assets/${encodeURIComponent(assetId)}`, undefined, 'Asset metadata read failed')
   return response.json() as Promise<AssetMetadata>
 }
 
@@ -49,15 +54,85 @@ async function updateAsset(
   assetId: string,
   body: Record<string, unknown>,
 ): Promise<AssetMetadata> {
-  const response = await brainStub(env).fetch(new Request(`https://brain-store/assets/${encodeURIComponent(assetId)}/update`, {
+  const response = await brainRequest(env, `/assets/${encodeURIComponent(assetId)}/update`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
-  }))
-  if (!response.ok) throw await responseError(response, 'Asset metadata update failed')
+  }, 'Asset metadata update failed')
   const result = await response.json() as { asset?: AssetMetadata }
   if (!result.asset) throw new AssetBinaryHttpError(502, 'Asset metadata update returned no asset')
   return result.asset
+}
+
+async function eventId(asset: AssetMetadata, eventType: string, token: string): Promise<string> {
+  const value = `${asset.project_id}:${asset.asset_id}:${eventType}:${token}`
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)))
+  const hex = [...digest].map((item) => item.toString(16).padStart(2, '0')).join('')
+  return `ae:${hex.slice(0, 48)}`
+}
+
+async function recordLifecycleEvent(
+  env: Env,
+  asset: AssetMetadata,
+  eventType: 'asset_uploaded' | 'asset_stored' | 'asset_deleted',
+  summary: string,
+  details: Record<string, unknown>,
+  token = String(asset.version),
+): Promise<void> {
+  await brainRequest(env, '/events', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      event_id: await eventId(asset, eventType, token),
+      project_id: asset.project_id,
+      mission_id: asset.mission_id,
+      object_id: asset.asset_id,
+      event_type: eventType,
+      actor_id: 'bestcode-asset-binary-api',
+      summary,
+      details: {
+        contract: 'asset-event-v1',
+        asset_id: asset.asset_id,
+        provider_neutral: true,
+        ...details,
+      },
+    }),
+  }, `Asset lifecycle event ${eventType} could not be persisted`)
+}
+
+async function readReferenceSummary(env: Env, assetId: string): Promise<{
+  active_reference_count: number
+  total_relationship_count: number
+  by_type: Record<string, number>
+}> {
+  const response = await brainRequest(
+    env,
+    `/assets/${encodeURIComponent(assetId)}/references`,
+    undefined,
+    'Asset reference count could not be verified',
+  )
+  const result = await response.json() as {
+    active_reference_count?: unknown
+    total_relationship_count?: unknown
+    by_type?: unknown
+  }
+  const active = Number(result.active_reference_count)
+  const total = Number(result.total_relationship_count)
+  if (!Number.isSafeInteger(active) || active < 0 || !Number.isSafeInteger(total) || total < 0) {
+    throw new AssetBinaryHttpError(502, 'Asset reference count response is invalid')
+  }
+  return {
+    active_reference_count: active,
+    total_relationship_count: total,
+    by_type: result.by_type && typeof result.by_type === 'object' ? result.by_type as Record<string, number> : {},
+  }
+}
+
+async function cleanupRelations(env: Env, assetId: string): Promise<void> {
+  await brainRequest(env, `/assets/${encodeURIComponent(assetId)}/cleanup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  }, 'Deleted asset relationship cleanup failed')
 }
 
 function objectRef(asset: AssetMetadata): AssetObjectRef {
@@ -130,6 +205,12 @@ async function putContent(request: Request, env: Env, assetId: string): Promise<
 
   if (current.upload_status === 'stored') {
     const existing = assertStoredObject(await store.head(ref), current, expectedKey)
+    await recordLifecycleEvent(env, current, 'asset_stored', 'Asset binary is stored and verified.', {
+      storage_key: existing.key,
+      size_bytes: existing.sizeBytes,
+      sha256: existing.sha256,
+      reused: true,
+    })
     return json({ asset: current, object: existing, created: false, idempotent: true })
   }
   if (current.upload_status === 'deleted') throw new AssetBinaryHttpError(409, 'Deleted asset requires an explicit restore decision')
@@ -144,6 +225,7 @@ async function putContent(request: Request, env: Env, assetId: string): Promise<
     expected_version: current.version,
     upload_status: 'uploading',
   })
+  let completed: AssetMetadata | null = null
 
   try {
     const bytes = new Uint8Array(await request.arrayBuffer())
@@ -155,18 +237,36 @@ async function putContent(request: Request, env: Env, assetId: string): Promise<
       filename: current.filename,
     })
     assertStoredObject(await store.head(ref), current, expectedKey)
-    const completed = await updateAsset(env, assetId, {
+    await recordLifecycleEvent(env, uploading, 'asset_uploaded', 'Asset binary upload completed.', {
+      storage_key: stored.key,
+      size_bytes: stored.sizeBytes,
+      sha256: stored.sha256,
+    })
+    completed = await updateAsset(env, assetId, {
       expected_version: uploading.version,
       upload_status: 'stored',
       storage_provider: 'r2',
       storage_key: stored.key,
     })
+    await recordLifecycleEvent(env, completed, 'asset_stored', 'Asset binary stored with verified metadata parity.', {
+      storage_key: stored.key,
+      size_bytes: stored.sizeBytes,
+      sha256: stored.sha256,
+      reused: false,
+    })
     return json({ asset: completed, object: stored, created: true, idempotent: false }, 201)
   } catch (error) {
+    if (completed) throw error
     try {
       const latest = await readAsset(env, assetId)
       if (latest.upload_status === 'stored' && latest.storage_provider === 'r2' && latest.storage_key === expectedKey) {
         const recovered = assertStoredObject(await store.head(ref), latest, expectedKey)
+        await recordLifecycleEvent(env, latest, 'asset_stored', 'Asset binary stored with verified metadata parity.', {
+          storage_key: recovered.key,
+          size_bytes: recovered.sizeBytes,
+          sha256: recovered.sha256,
+          recovered: true,
+        })
         return json({ asset: latest, object: recovered, created: false, idempotent: true, recovered: true })
       }
     } catch {
@@ -204,12 +304,38 @@ async function deleteContent(env: Env, assetId: string): Promise<Response> {
   const ref = objectRef(current)
   assertCanonicalMetadata(current, ref)
   const store = requireStore(env)
+
+  if (current.upload_status === 'deleted') {
+    await store.delete(ref)
+    if (await store.head(ref)) throw new AssetBinaryHttpError(500, 'R2 delete could not be verified')
+    await cleanupRelations(env, assetId)
+    await recordLifecycleEvent(env, current, 'asset_deleted', 'Deleted asset cleanup verified.', {
+      active_reference_count: 0,
+      idempotent: true,
+    })
+    return json({ asset: current, deleted: true, idempotent: true })
+  }
+
+  const references = await readReferenceSummary(env, assetId)
+  if (references.active_reference_count > 0) {
+    throw new AssetBinaryHttpError(
+      409,
+      `Asset binary is still referenced by ${references.active_reference_count} active relationship(s)`,
+    )
+  }
+
   await store.delete(ref)
   if (await store.head(ref)) throw new AssetBinaryHttpError(500, 'R2 delete could not be verified')
-  if (current.upload_status === 'deleted') return json({ asset: current, deleted: true, idempotent: true })
   const deleted = await updateAsset(env, assetId, {
     expected_version: current.version,
     upload_status: 'deleted',
+  })
+  await cleanupRelations(env, assetId)
+  await recordLifecycleEvent(env, deleted, 'asset_deleted', 'Asset binary and inactive relationships deleted.', {
+    active_reference_count: references.active_reference_count,
+    prior_relationship_count: references.total_relationship_count,
+    reference_types: references.by_type,
+    idempotent: false,
   })
   return json({ asset: deleted, deleted: true, idempotent: false })
 }
