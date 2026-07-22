@@ -231,7 +231,7 @@ export class CloudflareMoondreamVisionProcessor implements VisionProcessor {
   readonly name = CLOUDFLARE_MOONDREAM_PROCESSOR
   readonly version: string
 
-  constructor(private readonly ai: WorkersAiBinding, version = CLOUDFLARE_MOONDREAM_PROMPT_VERSION) {
+  constructor(private readonly ai: WorkersAiBinding, version: string = CLOUDFLARE_MOONDREAM_PROMPT_VERSION) {
     this.version = version
   }
 
