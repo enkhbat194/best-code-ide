@@ -41,7 +41,7 @@ test('classifies exact production, preview, and unknown trigger contracts', () =
   assert.equal(result.unknown.length, 1)
 })
 
-test('deletes backend preview trigger and creates Standard private bucket idempotently', async () => {
+test('creates Standard private bucket before deleting backend preview trigger', async () => {
   const calls = []
   let deleted = false
   const fetchImpl = async (url, init = {}) => {
@@ -74,8 +74,9 @@ test('deletes backend preview trigger and creates Standard private bucket idempo
   assert.equal(evidence.bucket.storage_class, 'Standard')
   assert.equal(evidence.bucket.created, true)
   assert.equal(evidence.security.public_bucket_access_enabled, false)
-  assert.ok(calls.some((call) => call.method === 'DELETE' && call.url.endsWith('/builds/triggers/preview-uuid')))
-  assert.ok(calls.some((call) => call.method === 'POST' && call.body.storageClass === 'Standard'))
+  const bucketCreateIndex = calls.findIndex((call) => call.method === 'POST' && call.url.endsWith('/r2/buckets'))
+  const previewDeleteIndex = calls.findIndex((call) => call.method === 'DELETE' && call.url.endsWith('/builds/triggers/preview-uuid'))
+  assert.ok(bucketCreateIndex >= 0 && bucketCreateIndex < previewDeleteIndex)
 })
 
 test('leaves existing Standard bucket and absent preview trigger unchanged', async () => {
