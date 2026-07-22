@@ -37,18 +37,20 @@ function assertCustomMetadata(ref: AssetObjectRef, key: string, customMetadata: 
 function descriptor(ref: AssetObjectRef, object: R2Object, verification: AssetStoredObject['verification']): AssetStoredObject {
   const key = assetObjectKey(ref)
   if (object.key !== key) throw new Error('R2 returned a non-canonical asset key')
+  const customMetadata = object.customMetadata
   const expected = { sha256: ref.sha256, sizeBytes: object.size }
-  assertCustomMetadata(ref, key, object.customMetadata, expected)
-  const declaredSize = Number(object.customMetadata.size_bytes)
+  assertCustomMetadata(ref, key, customMetadata, expected)
+  if (!customMetadata) throw new Error('Stored R2 object metadata is unavailable')
+  const declaredSize = Number(customMetadata.size_bytes)
   if (object.size !== declaredSize) throw new Error(`Stored R2 object size mismatch: metadata ${declaredSize}, object ${object.size}`)
   return {
     provider: R2_ASSET_PROVIDER,
     access: ASSET_STORAGE_ACCESS,
     key,
-    sha256: object.customMetadata.sha256,
+    sha256: customMetadata.sha256,
     sizeBytes: object.size,
-    mediaType: metadataMediaType(object.customMetadata),
-    filename: metadataFilename(object.customMetadata),
+    mediaType: metadataMediaType(customMetadata),
+    filename: metadataFilename(customMetadata),
     etag: object.httpEtag,
     uploadedAt: object.uploaded.toISOString(),
     verification,
