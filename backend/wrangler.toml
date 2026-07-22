@@ -34,7 +34,7 @@ compatibility_date = "2024-11-01"
 
 [vars]
 VISION_PROCESSOR_MODE = "workers-ai"
-VISION_PROCESSOR_VERSION = "2026-07-08.prompt-v1"
+VISION_PROCESSOR_VERSION = "2026-07-23.prompt-v2"
 VISION_PROCESSOR_TIMEOUT_MS = "30000"
 
 [ai]
