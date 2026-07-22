@@ -45,7 +45,8 @@ jobs:
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
       - name: Typecheck
-        run: npm run typecheck 2>&1 | tee typecheck.log
+        shell: bash
+        run: bash ../scripts/run-backend-typecheck-with-log.sh
       - name: Upload typecheck log
         if: always()
         uses: actions/upload-artifact@v4
