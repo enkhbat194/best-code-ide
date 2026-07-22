@@ -8,7 +8,7 @@ compatibility_date = "2024-11-01"
 #   PROJECTS_JSON             Project registry with optional workflows, previewUrl, and memoryPaths
 #   MCP_ALLOWED_ORIGINS       Optional comma-separated trusted browser origins
 #   CORS_ALLOWED_ORIGINS      Optional comma-separated browser origin allowlist
-#   DEEPSEEK_API_KEY          Optional legacy in-app text agent key; not a vision provider
+#   DEEPSEEK_API_KEY          Optional legacy in-app text agent key; not used for image processing
 #   ENABLE_LEGACY_AGENT       Optional; set true only to restore /api/chat
 #   ENABLE_LEGACY_REST_WRITES Optional; set true only to restore direct legacy REST writes
 #   MAX_*_REQUEST_BYTES       Optional per-route request envelope overrides
@@ -16,23 +16,29 @@ compatibility_date = "2024-11-01"
 #   *_RATE_LIMIT_REQUESTS     Optional owner/unauthorized request ceilings
 #   RATE_LIMIT_WINDOW_MS      Optional rate-limit window override
 #
-# Attachment processing configuration (no production provider is enabled by default):
-#   VISION_PROCESSOR_MODE       Optional. "mock" is for tests/development only.
-#   VISION_PROCESSOR_VERSION    Processor contract/cache version.
+# Attachment processing configuration:
+#   VISION_PROCESSOR_MODE       "workers-ai" selects the private Cloudflare Workers AI binding.
+#   VISION_PROCESSOR_VERSION    Changes invalidate the checksum + processor-version cache.
 #   VISION_MAX_IMAGE_BYTES      Default 10 MiB; never exceeds MAX_ASSET_BYTES.
 #   VISION_MAX_IMAGE_WIDTH      Default 12000 pixels.
 #   VISION_MAX_IMAGE_HEIGHT     Default 12000 pixels.
 #   VISION_MAX_IMAGE_PIXELS     Default 40000000 pixels.
 #   VISION_PROCESSOR_TIMEOUT_MS Default 30000; maximum 120000.
-# A real vision provider, API key, Workers AI binding, billing, retention policy, and data-processing
-# agreement require a separate owner-approved change. Without one, processing fails closed with
-# vision_provider_not_configured and never sends private binaries to an external provider.
+# Private image bytes travel backend-to-binding only. No public R2 URL, browser-direct bucket access,
+# provider API key, or secret is introduced by this configuration.
 #
 # R2 remains private. No r2.dev public URL, custom domain, or browser-direct bucket access is configured.
-# This binding must not reach production until best-code-ide-assets-prod exists and infrastructure evidence is green.
 #
 # Example PROJECTS_JSON shape:
 # [{"id":"bestcode","name":"BestCode PWA","owner":"enkhbat194","repo":"best-code-ide","defaultBranch":"main","buildWorkflow":"validate.yml","testWorkflow":"test.yml","memoryPaths":["BESTCODE_MASTER.md","docs/PROJECT_STATUS.md","docs/ARCHITECTURE.md","docs/ROADMAP.md","docs/RESEARCH_POLICY.md","docs/EVIDENCE_STANDARD.md","docs/THREAT_MODEL.md","docs/PRODUCT_BENCHMARK.md","docs/DECISIONS/README.md","docs/DECISIONS/0001-project-brain-and-ai-roles.md","docs/DECISIONS/0002-personal-creation-os.md","README.md"]}]
+
+[vars]
+VISION_PROCESSOR_MODE = "workers-ai"
+VISION_PROCESSOR_VERSION = "2026-07-08.prompt-v1"
+VISION_PROCESSOR_TIMEOUT_MS = "30000"
+
+[ai]
+binding = "AI"
 
 [[r2_buckets]]
 binding = "ASSET_BUCKET"
