@@ -29,7 +29,7 @@ export interface VisionSmokeReport {
 }
 
 const EXPECTED_PROCESSOR = 'cloudflare-workers-ai-moondream3.1'
-const CANARY_MARKER = 'BESTCODE-VISION-7264'
+const CANARY_MARKER = 'BESTCODE-VISION-7265'
 
 function initialSteps(): VisionSmokeStep[] {
   return [
@@ -68,7 +68,7 @@ async function canaryFile(): Promise<File> {
   context.font = '700 64px Arial, sans-serif'
   context.fillText(CANARY_MARKER, 45, 95)
   context.font = '700 38px Arial, sans-serif'
-  context.fillText('PRIVATE IMAGE PIPELINE TEST', 45, 155)
+  context.fillText('PRIVATE IMAGE PIPELINE TEST V2', 45, 155)
 
   context.fillStyle = '#2464dc'
   context.beginPath()
@@ -87,16 +87,16 @@ async function canaryFile(): Promise<File> {
   context.fillText('BLUE CIRCLE', 70, 485)
   context.fillText('GREEN RECTANGLE', 375, 485)
 
-  return new File([await canvasBlob(canvas)], 'bestcode-vision-owner-canary.png', {
+  return new File([await canvasBlob(canvas)], 'bestcode-vision-owner-canary-v2.png', {
     type: 'image/png',
-    lastModified: 1_753_248_000_000,
+    lastModified: 1_753_248_000_001,
   })
 }
 
 function semanticRecognition(value: string): boolean {
   const lower = value.toLowerCase()
   const compact = lower.normalize('NFKD').replace(/[^a-z0-9]+/g, '')
-  const marker = compact.includes('bestcodevision7264')
+  const marker = compact.includes('bestcodevision7265')
   const circle = /circle|тойрог|дугуй/.test(lower)
   const rectangle = /rectangle|тэгш өнцөгт|дөрвөлжин/.test(lower)
   return marker || (circle && rectangle)

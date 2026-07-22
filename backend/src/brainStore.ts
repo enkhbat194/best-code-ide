@@ -51,6 +51,15 @@ function validIdentifier(value: string | null): value is string {
   return value !== null && /^[A-Za-z0-9._:-]{3,64}$/.test(value)
 }
 
+function decodedPathIdentifier(value: string): string | null {
+  try {
+    const decoded = decodeURIComponent(value)
+    return validIdentifier(decoded) ? decoded : null
+  } catch {
+    return null
+  }
+}
+
 function boundedLimit(value: string | null, fallback: number, max: number): number {
   const parsed = Number(value ?? fallback)
   if (!Number.isFinite(parsed)) return fallback
@@ -197,8 +206,8 @@ export class BrainStore {
       if (request.method === 'GET' && url.pathname === '/objects') return this.listObjects(url)
 
       if (segments[0] === 'objects' && segments[1]) {
-        const objectId = segments[1]
-        if (!validIdentifier(objectId)) return json({ error: 'Invalid Brain object id' }, 400)
+        const objectId = decodedPathIdentifier(segments[1])
+        if (!objectId) return json({ error: 'Invalid Brain object id' }, 400)
         const current = await this.readObject(objectId)
         if (!current) return json({ error: 'Brain object not found' }, 404)
         if (request.method === 'GET' && segments.length === 2) return json(current)
