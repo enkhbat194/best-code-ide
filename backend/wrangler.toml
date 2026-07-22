@@ -12,6 +12,7 @@ compatibility_date = "2024-11-01"
 #   ENABLE_LEGACY_AGENT       Optional; set true only to restore /api/chat
 #   ENABLE_LEGACY_REST_WRITES Optional; set true only to restore direct legacy REST writes
 #   MAX_*_REQUEST_BYTES       Optional per-route request envelope overrides
+#   MAX_ASSET_BYTES           Optional maximum asset metadata size policy; default is 100 MiB
 #   *_RATE_LIMIT_REQUESTS     Optional owner/unauthorized request ceilings
 #   RATE_LIMIT_WINDOW_MS      Optional rate-limit window override
 #

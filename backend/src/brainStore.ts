@@ -1,3 +1,4 @@
+import { handleAssetStore } from './assetStore'
 import {
   isBrainObjectKind,
   normalizeBrainEvent,
@@ -114,8 +115,12 @@ export class BrainStore {
     const segments = url.pathname.split('/').filter(Boolean)
 
     try {
+      const assetResponse = await handleAssetStore(request, this.state, (objectId) => this.readObject(objectId))
+      if (assetResponse) return assetResponse
+
       if (request.method === 'POST' && url.pathname === '/objects') {
         const object = normalizeBrainObjectCreate(await request.json().catch(() => null))
+        if (object.kind === 'asset') return json({ error: 'Use /assets for typed asset metadata' }, 409)
         if (await this.state.storage.get(objectLookupKey(object.object_id))) return json({ error: 'Brain object already exists' }, 409)
         const key = objectKey(object)
         await this.state.storage.put(key, object)
@@ -132,6 +137,7 @@ export class BrainStore {
         if (!current) return json({ error: 'Brain object not found' }, 404)
         if (request.method === 'GET' && segments.length === 2) return json(current)
         if (request.method === 'POST' && segments[2] === 'update') {
+          if (current.kind === 'asset') return json({ error: 'Use /assets/:asset_id/update for typed asset metadata' }, 409)
           const updated = normalizeBrainObjectUpdate(current, await request.json().catch(() => null))
           await this.state.storage.put(objectKey(updated), updated)
           return json(updated)
