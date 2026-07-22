@@ -12,15 +12,19 @@ compatibility_date = "2024-11-01"
 #   ENABLE_LEGACY_AGENT       Optional; set true only to restore /api/chat
 #   ENABLE_LEGACY_REST_WRITES Optional; set true only to restore direct legacy REST writes
 #   MAX_*_REQUEST_BYTES       Optional per-route request envelope overrides
-#   MAX_ASSET_BYTES           Optional maximum asset metadata size policy; default is 100 MiB
+#   MAX_ASSET_BYTES           Maximum asset metadata and binary upload size; default is 100 MiB
 #   *_RATE_LIMIT_REQUESTS     Optional owner/unauthorized request ceilings
 #   RATE_LIMIT_WINDOW_MS      Optional rate-limit window override
 #
-# R2 binding is intentionally absent in PR 2.2. Creating a bucket or adding
-# an R2 bucket binding requires explicit owner approval and separate production evidence.
+# R2 remains private. No r2.dev public URL, custom domain, or browser-direct bucket access is configured.
+# This binding must not reach production until best-code-ide-assets-prod exists and infrastructure evidence is green.
 #
 # Example PROJECTS_JSON shape:
 # [{"id":"bestcode","name":"BestCode PWA","owner":"enkhbat194","repo":"best-code-ide","defaultBranch":"main","buildWorkflow":"validate.yml","testWorkflow":"test.yml","memoryPaths":["BESTCODE_MASTER.md","docs/PROJECT_STATUS.md","docs/ARCHITECTURE.md","docs/ROADMAP.md","docs/RESEARCH_POLICY.md","docs/EVIDENCE_STANDARD.md","docs/THREAT_MODEL.md","docs/PRODUCT_BENCHMARK.md","docs/DECISIONS/README.md","docs/DECISIONS/0001-project-brain-and-ai-roles.md","docs/DECISIONS/0002-personal-creation-os.md","README.md"]}]
+
+[[r2_buckets]]
+binding = "ASSET_BUCKET"
+bucket_name = "best-code-ide-assets-prod"
 
 [[durable_objects.bindings]]
 name = "APPROVALS"
