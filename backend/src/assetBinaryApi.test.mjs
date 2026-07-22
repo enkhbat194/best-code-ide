@@ -72,12 +72,41 @@ class FakeBrainStub {
   constructor(asset) {
     this.asset = asset
     this.failStoredUpdateOnce = false
+    this.activeReferenceCount = 0
+    this.totalRelationshipCount = 1
+    this.events = new Map()
+    this.cleanupCalls = 0
   }
 
   async fetch(request) {
     const url = new URL(request.url)
     if (request.method === 'GET' && url.pathname === `/assets/${this.asset.asset_id}`) {
       return new Response(JSON.stringify(this.asset), { headers: { 'Content-Type': 'application/json' } })
+    }
+    if (request.method === 'GET' && url.pathname === `/assets/${this.asset.asset_id}/references`) {
+      return new Response(JSON.stringify({
+        asset_id: this.asset.asset_id,
+        project_id: this.asset.project_id,
+        active_reference_count: this.activeReferenceCount,
+        total_relationship_count: this.totalRelationshipCount,
+        by_type: this.activeReferenceCount ? { used_by_mission: this.activeReferenceCount } : {},
+        relationships: [],
+      }), { headers: { 'Content-Type': 'application/json' } })
+    }
+    if (request.method === 'POST' && url.pathname === `/assets/${this.asset.asset_id}/cleanup`) {
+      this.cleanupCalls += 1
+      return new Response(JSON.stringify({ removed_relation_ids: [], remaining_relationship_count: 0 }), {
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+    if (request.method === 'POST' && url.pathname === '/events') {
+      const body = await request.json()
+      const existed = this.events.has(body.event_id)
+      this.events.set(body.event_id, body)
+      return new Response(JSON.stringify(body), {
+        status: existed ? 200 : 201,
+        headers: { 'Content-Type': 'application/json' },
+      })
     }
     if (request.method === 'POST' && url.pathname === `/assets/${this.asset.asset_id}/update`) {
       const body = await request.json()
@@ -180,6 +209,7 @@ test('secure binary API stores, reuses, downloads privately, and deletes with Br
   assert.equal(remove.status, 200)
   assert.equal(state.brain.asset.upload_status, 'deleted')
   assert.equal(state.bucket.records.size, 0)
+  assert.equal(state.brain.cleanupCalls, 1)
 
   const repeatedDelete = await handleAssetBinaryApi(new Request(`https://bestcode.test/api/brain/assets/${state.brain.asset.asset_id}/content`, { method: 'DELETE' }), state.value)
   assert.equal(repeatedDelete.status, 200)
@@ -187,6 +217,26 @@ test('secure binary API stores, reuses, downloads privately, and deletes with Br
 
   const missing = await handleAssetBinaryApi(new Request(`https://bestcode.test/api/brain/assets/${state.brain.asset.asset_id}/content`), state.value)
   assert.equal(missing.status, 404)
+  const eventTypes = new Set([...state.brain.events.values()].map((event) => event.event_type))
+  assert.deepEqual(eventTypes, new Set(['asset_uploaded', 'asset_stored', 'asset_deleted']))
+})
+
+test('secure binary delete fails closed while active Second Brain references remain', async () => {
+  const state = env(assetFor(bytes, sha))
+  assert.equal((await handleAssetBinaryApi(putRequest(state.brain.asset.asset_id, bytes), state.value)).status, 201)
+  state.brain.activeReferenceCount = 2
+  state.brain.totalRelationshipCount = 3
+
+  const blocked = await handleAssetBinaryApi(new Request(`https://bestcode.test/api/brain/assets/${state.brain.asset.asset_id}/content`, { method: 'DELETE' }), state.value)
+  assert.equal(blocked.status, 409)
+  assert.match((await blocked.json()).error, /still referenced by 2/)
+  assert.equal(state.brain.asset.upload_status, 'stored')
+  assert.equal(state.bucket.records.size, 1)
+  assert.equal(state.brain.cleanupCalls, 0)
+
+  state.brain.activeReferenceCount = 0
+  assert.equal((await handleAssetBinaryApi(new Request(`https://bestcode.test/api/brain/assets/${state.brain.asset.asset_id}/content`, { method: 'DELETE' }), state.value)).status, 200)
+  assert.equal(state.bucket.records.size, 0)
 })
 
 test('secure binary API rejects a body checksum mismatch, removes R2 data, and marks metadata failed', async () => {
