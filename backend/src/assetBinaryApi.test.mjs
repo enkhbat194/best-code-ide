@@ -202,7 +202,7 @@ test('secure binary API compensates an R2 write when the final Brain metadata up
   const state = env(assetFor(bytes, sha))
   state.brain.failStoredUpdateOnce = true
   const response = await handleAssetBinaryApi(putRequest(state.brain.asset.asset_id, bytes), state.value)
-  assert.equal(response.status, 500)
+  assert.equal(response.status, 502)
   assert.match((await response.json()).error, /synthetic stored metadata failure/)
   assert.equal(state.brain.asset.upload_status, 'failed')
   assert.equal(state.bucket.records.size, 0)
