@@ -33,7 +33,7 @@ import {
 import { handleSecurityAudit, persistSecurityAudit } from './securityAudit'
 import { handleTasks } from './tasks'
 import { handleWorkspaceExport } from './workspace'
-import { CORS_HEADERS, jsonError, jsonResponse, resolveSecret } from './utils'
+import { CORS_HEADERS, jsonError, jsonResponse, resolveSecret, withCors } from './utils'
 import type { Env } from './types'
 
 export { ApprovalStore } from './approvalStore'
@@ -133,13 +133,13 @@ export default {
     const assetBinaryResponse = await handleAssetBinaryApi(req, env, url)
     if (assetBinaryResponse) {
       audit('asset_binary_api', { path: url.pathname, method: req.method, status: assetBinaryResponse.status, identity })
-      return assetBinaryResponse
+      return withCors(assetBinaryResponse)
     }
 
     const brainResponse = await handleBrainApi(req, env, url)
     if (brainResponse) {
       audit('brain_api', { path: url.pathname, method: req.method, status: brainResponse.status, identity })
-      return brainResponse
+      return withCors(brainResponse)
     }
 
     const missionResponse = await handleMissionApi(req, env, url)
