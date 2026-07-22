@@ -110,7 +110,8 @@ test('Wrangler enables the private Workers AI binding without adding provider se
 
 test('installed PWA exposes a deterministic owner-visible private image recognition smoke test', () => {
   assert.match(visionSmokeSource, /BESTCODE-VISION-7264/)
-  assert.match(visionSmokeSource, /asset:vision-smoke:/)
+  assert.match(visionSmokeSource, /asset-vision-smoke-/)
+  assert.doesNotMatch(visionSmokeSource, /asset:vision-smoke:/)
   assert.match(visionSmokeSource, /registerChatAsset/)
   assert.match(visionSmokeSource, /uploadAssetContent/)
   assert.match(visionSmokeSource, /processAsset/)
