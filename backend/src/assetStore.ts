@@ -1,4 +1,9 @@
 import {
+  assetReferenceSummary,
+  linkAssetDefaults,
+  recordAssetEvent,
+} from './assetLifecycle'
+import {
   assetCreateFingerprint,
   assetFromBrainObject,
   assetToBrainObject,
@@ -91,13 +96,26 @@ async function listAssets(state: DurableObjectState, url: URL): Promise<Response
   return json({ items: items.slice(0, limit), count: Math.min(items.length, limit), total: items.length })
 }
 
+async function lifecyclePayload(
+  state: DurableObjectState,
+  asset: AssetMetadata,
+  rawInput: unknown,
+  readObject: ReadObject,
+) {
+  const links = await linkAssetDefaults(state, asset, rawInput, readObject)
+  const references = await assetReferenceSummary(state, asset)
+  return { links, references }
+}
+
 async function createAsset(request: Request, state: DurableObjectState, readObject: ReadObject): Promise<Response> {
-  const asset = normalizeAssetCreate(await request.json().catch(() => null), new Date().toISOString(), assetPolicy(request))
+  const rawInput = await request.json().catch(() => null)
+  const asset = normalizeAssetCreate(rawInput, new Date().toISOString(), assetPolicy(request))
   const fingerprint = assetCreateFingerprint(asset)
   const existingById = await readAsset(readObject, asset.asset_id)
   if (existingById) {
     if (assetCreateFingerprint(existingById) === fingerprint) {
-      return json({ asset: existingById, created: false, duplicate: false, idempotent: true })
+      const lifecycle = await lifecyclePayload(state, existingById, rawInput, readObject)
+      return json({ asset: existingById, created: false, duplicate: false, idempotent: true, ...lifecycle })
     }
     return json({ error: 'Asset id already exists with different metadata' }, 409)
   }
@@ -109,7 +127,8 @@ async function createAsset(request: Request, state: DurableObjectState, readObje
     if (!existing) {
       await state.storage.delete(idempotencyStorageKey)
     } else if (idempotency.fingerprint === fingerprint) {
-      return json({ asset: existing, created: false, duplicate: false, idempotent: true })
+      const lifecycle = await lifecyclePayload(state, existing, rawInput, readObject)
+      return json({ asset: existing, created: false, duplicate: false, idempotent: true, ...lifecycle })
     } else {
       return json({ error: 'Idempotency key was already used for different asset metadata' }, 409)
     }
@@ -124,7 +143,31 @@ async function createAsset(request: Request, state: DurableObjectState, readObje
     } else if (existing.upload_status === 'deleted') {
       return json({ error: 'A matching deleted asset exists and requires an explicit restore or re-upload decision' }, 409)
     } else {
-      return json({ asset: existing, created: false, duplicate: true, idempotent: false, reused_asset_id: existing.asset_id })
+      const lifecycle = await lifecyclePayload(state, existing, rawInput, readObject)
+      await recordAssetEvent(
+        state,
+        existing,
+        'asset_reused',
+        asset.created_by,
+        'Existing asset binary reused for a new Second Brain relationship.',
+        {
+          requested_asset_id: asset.asset_id,
+          requested_mission_id: asset.mission_id,
+          requested_source_id: asset.source_id,
+          relation_ids: lifecycle.links.relations.map((relation) => relation.relation_id),
+          binary_created: false,
+        },
+        asset.idempotency_key,
+      )
+      return json({
+        asset: existing,
+        created: false,
+        duplicate: true,
+        idempotent: false,
+        reused_asset_id: existing.asset_id,
+        binary_created: false,
+        ...lifecycle,
+      })
     }
   }
 
@@ -135,7 +178,16 @@ async function createAsset(request: Request, state: DurableObjectState, readObje
   await state.storage.put(objectLookupKey(asset.asset_id), key)
   await state.storage.put(duplicateStorageKey, index)
   await state.storage.put(idempotencyStorageKey, index)
-  return json({ asset, created: true, duplicate: false, idempotent: false }, 201)
+  await recordAssetEvent(
+    state,
+    asset,
+    'asset_registered',
+    asset.created_by,
+    'Asset metadata registered in Second Brain.',
+    { upload_status: asset.upload_status, storage_provider: asset.storage_provider },
+  )
+  const lifecycle = await lifecyclePayload(state, asset, rawInput, readObject)
+  return json({ asset, created: true, duplicate: false, idempotent: false, ...lifecycle }, 201)
 }
 
 async function updateAsset(
