@@ -1,9 +1,11 @@
 import * as vfs from './fs'
 import { commitFile } from './backend'
+import { serializeAssetReferences } from './chatAttachmentPolicy'
 import { executeMissionAgentTool, MISSION_AGENT_TOOL_SCHEMAS } from './missionAgentTools'
 import { importGitHubWorkspace } from './workspace'
 import { useFsStore } from '../store/fsStore'
 import { useSettingsStore } from '../store/settingsStore'
+import type { ChatAttachmentReference } from '../types'
 
 const MAX_ITERATIONS = 12
 const MAX_RESULT_CHARS = 20_000
@@ -13,6 +15,12 @@ export type AgentEvent =
   | { type: 'tool_call'; id: string; name: string; args: Record<string, unknown> }
   | { type: 'tool_result'; id: string; result: string; error?: boolean }
   | { type: 'error'; message: string }
+
+export interface AgentHistoryMessage {
+  role: 'user' | 'assistant'
+  content: string
+  attachments?: ChatAttachmentReference[]
+}
 
 interface RawToolCall {
   id?: string
@@ -183,6 +191,10 @@ function systemPrompt(): string {
     `When the user provides a Mission ID or asks to inspect, resume, summarize, verify, or hand off a Mission, ` +
     `use mission_context_packet first; use mission_get for the full record and mission_list only when an ID is unknown. ` +
     `These Mission tools are read-only. Never ask where a Mission file is when a Mission ID is available. ` +
+    `Chat attachment blocks contain private Asset reference metadata only. The model has not received the binary file. ` +
+    `Never claim that an image, PDF, audio, video, document, archive, or other attachment was opened, read, OCR processed, ` +
+    `transcribed, summarized, or understood. You may only acknowledge its asset_id, filename, MIME type, byte size, ` +
+    `and an explicitly supplied existing mission_id. Do not invent attachment content. ` +
     `When the user asks for a program, write the file(s) locally and tell them to open the Preview tab to run it. ` +
     `The Preview tab can run: (1) .html / .js / .jsx / .ts / .tsx in the browser — npm packages like react work, ` +
     `they load automatically from esm.sh, so you can write a real React app (an index.html with a module script, ` +
@@ -194,8 +206,18 @@ function systemPrompt(): string {
   )
 }
 
+function providerHistory(history: AgentHistoryMessage[]): LoopMessage[] {
+  return history.map((message) => {
+    const attachmentBlock = message.role === 'user' ? serializeAssetReferences(message.attachments ?? []) : ''
+    return {
+      role: message.role,
+      content: attachmentBlock ? `${message.content}\n\n${attachmentBlock}` : message.content,
+    }
+  })
+}
+
 export async function runLocalAgent(
-  history: { role: 'user' | 'assistant'; content: string }[],
+  history: AgentHistoryMessage[],
   onEvent: (event: AgentEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
@@ -205,7 +227,7 @@ export async function runLocalAgent(
     return
   }
 
-  const messages: LoopMessage[] = [{ role: 'system', content: systemPrompt() }, ...history]
+  const messages: LoopMessage[] = [{ role: 'system', content: systemPrompt() }, ...providerHistory(history)]
 
   for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
     if (signal?.aborted) return
