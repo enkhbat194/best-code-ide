@@ -8,6 +8,7 @@ import { MissionSmokeCard } from './MissionSmokeCard'
 import { RollbackRequestCard } from './RollbackRequestCard'
 import { TrustHistoryCard } from './TrustHistoryCard'
 import { UpdateStatusCard } from './UpdateStatusCard'
+import { VisionSmokeCard } from './VisionSmokeCard'
 import styles from './SettingsView.module.css'
 
 const statusCopy: Record<ReleaseIntegrityStatus, { label: string; tone: string }> = {
@@ -103,6 +104,7 @@ export function SettingsView() {
 
       <UpdateStatusCard backendSchema={backendSchema} backendSha={release?.repository.main_sha} />
       <MissionSmokeCard />
+      <VisionSmokeCard />
       <TrustHistoryCard />
       <RollbackRequestCard />
       <MaintenanceCenter />
@@ -113,7 +115,7 @@ export function SettingsView() {
       <div className={styles.field}><label>GitHub owner</label><input value={s.owner} onChange={(e) => s.setOwner(e.target.value)} placeholder="enkhbat194" /></div>
       <div className={styles.field}><label>GitHub repo</label><input value={s.repo} onChange={(e) => s.setRepo(e.target.value)} placeholder="best-code-ide" /></div>
       <div className={styles.field}><label>Branch</label><input value={s.branch} onChange={(e) => s.setBranch(e.target.value)} placeholder="main" /></div>
-      <p className={styles.hint}>DeepSeek API key болон GitHub token нь энэ апп дотор биш, зөвхөн Cloudflare Worker дээр нууцаар хадгалагдана. Энд оруулсан &quot;Auth token&quot; нь зөвхөн энэ апп/AI chat-ыг таны Worker-тэй холбоход ашиглагдана.</p>
+      <p className={styles.hint}>DeepSeek API key болон GitHub token нь энэ апп дотор биш, зөвхөн Cloudflare Worker дээр нууцаар хадгалагдана. Workers AI image processing нь provider API key-гүй private Worker binding ашиглана. Энд оруулсан &quot;Auth token&quot; нь зөвхөн энэ апп/AI chat-ыг таны Worker-тэй холбоход ашиглагдана.</p>
     </div>
   )
 }
