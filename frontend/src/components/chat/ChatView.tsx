@@ -15,16 +15,25 @@ import {
   Square,
   X,
 } from 'lucide-react'
+import {
+  getAssetProcessing,
+  getAssetProcessingResult,
+  processAsset,
+  processingErrorLabel,
+  retryAssetProcessing,
+  type AssetProcessingState,
+} from '../../lib/assetClient'
 import { attachmentStatusLabel, extractExplicitMissionId, formatBytes, getChatAttachmentConfig } from '../../lib/chatAttachmentPolicy'
 import { getMission } from '../../lib/missionClient'
 import { useAttachmentStore, type AttachmentQueueItem } from '../../store/attachmentStore'
 import { useChatStore } from '../../store/chatStore'
 import { useSettingsStore } from '../../store/settingsStore'
-import type { ChatAttachmentReference } from '../../types'
+import type { ChatAttachmentReference, ProcessingResultReference } from '../../types'
 import { ToolCallCard } from './ToolCallCard'
 import styles from './ChatView.module.css'
 
 const attachmentConfig = getChatAttachmentConfig()
+const PROCESSABLE_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
 
 export function ChatView() {
   const { messages, isSending, error, send, stop } = useChatStore()
@@ -112,7 +121,7 @@ export function ChatView() {
         {messages.length === 0 && (
           <div className={styles.empty}>
             {configured
-              ? 'Mission ID өгвөл durable context packet-ийг backend-ээс read-only уншина. Зураг, PDF, аудио болон бусад зөвшөөрөгдсөн файлыг private Asset reference болгон хавсаргаж болно.'
+              ? 'Mission ID өгвөл durable context packet-ийг backend-ээс read-only уншина. Private Asset зураг хавсаргаад processing ready болсны дараа AI derived result-ийг context болгон ашиглана.'
               : 'Эхлээд Settings tab-с backend URL болон token-оо тохируулна уу.'}
           </div>
         )}
@@ -155,7 +164,7 @@ export function ChatView() {
           {attachments.some((item) => item.status === 'stored' || item.status === 'linked') && (
             <div className={styles.storedNotice}>
               <CheckCircle2 size={16} />
-              <span>Файл найдвартай хадгалагдлаа. Агуулгыг AI-аар унших боломж дараагийн processing багцаар нэмэгдэнэ.</span>
+              <span>Файл private storage-д хадгалагдлаа. Холбогдсон файл — агуулга уншаагүй.</span>
             </div>
           )}
         </section>
@@ -266,18 +275,105 @@ function AttachmentQueueRow({
   )
 }
 
+function processingLabel(state: AssetProcessingState | null, attachment: ChatAttachmentReference): string {
+  const status = state?.status ?? attachment.processing_status
+  if (status === 'ready') return 'Агуулга уншсан'
+  if (status === 'queued') return 'Processing queue-д байна'
+  if (status === 'processing') return 'Агуулга боловсруулж байна'
+  if (status === 'failed') return 'Агуулга унших амжилтгүй'
+  if (status === 'unsupported') return 'Энэ format дэмжигдэхгүй'
+  return 'Холбогдсон файл — агуулга уншаагүй'
+}
+
+function MessageAttachmentCard({ attachment }: { attachment: ChatAttachmentReference }) {
+  const [state, setState] = useState<AssetProcessingState | null>(null)
+  const [result, setResult] = useState<ProcessingResultReference | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const processable = PROCESSABLE_IMAGE_TYPES.has(attachment.media_type)
+
+  async function refresh() {
+    const current = await getAssetProcessing(attachment.asset_id, attachment.project_id)
+    setState(current)
+    if (current.status === 'ready') {
+      const ready = await getAssetProcessingResult(attachment.asset_id, attachment.project_id)
+      setResult(ready.result)
+    } else {
+      setResult(null)
+    }
+  }
+
+  useEffect(() => {
+    let active = true
+    void getAssetProcessing(attachment.asset_id, attachment.project_id)
+      .then(async (current) => {
+        if (!active) return
+        setState(current)
+        if (current.status === 'ready') {
+          const ready = await getAssetProcessingResult(attachment.asset_id, attachment.project_id)
+          if (active) setResult(ready.result)
+        }
+      })
+      .catch(() => undefined)
+    return () => { active = false }
+  }, [attachment.asset_id, attachment.project_id])
+
+  async function run(retry: boolean) {
+    setBusy(true)
+    setError('')
+    try {
+      if (retry) await retryAssetProcessing(attachment.asset_id, attachment.project_id)
+      else await processAsset(attachment.asset_id, attachment.project_id)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      await refresh().catch(() => undefined)
+      setBusy(false)
+    }
+  }
+
+  const status = state?.status ?? attachment.processing_status
+  const safeError = state?.job?.safe_error_code
+  return (
+    <div>
+      <div className={styles.messageAttachment}>
+        <Paperclip size={14} />
+        <div>
+          <strong>{attachment.filename}</strong>
+          <span>{attachment.media_type} · {formatBytes(attachment.size_bytes)}</span>
+          <span className={styles.attachmentStatus}>{processingLabel(state, attachment)}</span>
+          <code>{attachment.asset_id}</code>
+          {processable && status === 'not_requested' && (
+            <button type="button" style={{ marginTop: 6, minHeight: 36, borderRadius: 9, padding: '6px 9px' }} onClick={() => void run(false)} disabled={busy}>
+              {busy ? <LoaderCircle size={13} className={styles.spinning} /> : <ImagePlus size={13} />} Агуулга унших
+            </button>
+          )}
+          {processable && (status === 'failed' || status === 'unsupported') && (
+            <button type="button" style={{ marginTop: 6, minHeight: 36, borderRadius: 9, padding: '6px 9px' }} onClick={() => void run(true)} disabled={busy}>
+              {busy ? <LoaderCircle size={13} className={styles.spinning} /> : <RefreshCw size={13} />} Processing retry
+            </button>
+          )}
+          {(error || safeError) && <span style={{ whiteSpace: 'normal' }}>{error || processingErrorLabel(safeError)}</span>}
+        </div>
+      </div>
+      {result && (
+        <div className={styles.messageAttachment} style={{ marginTop: 6, display: 'block' }} aria-label="Attachment processing result">
+          <strong>Processing result — агуулга уншсан</strong>
+          <p>{result.summary}</p>
+          {result.visible_text && <blockquote>{result.visible_text.slice(0, 600)}</blockquote>}
+          <span>AI-ийн derived interpretation; verified fact биш.</span>
+          {result.warnings.length > 0 && <span>Warning: {result.warnings.join(', ')}</span>}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function MessageAttachments({ attachments }: { attachments: ChatAttachmentReference[] }) {
   return (
     <div className={styles.messageAttachments} aria-label="Asset references">
       {attachments.map((attachment) => (
-        <div className={styles.messageAttachment} key={attachment.asset_id}>
-          <Paperclip size={14} />
-          <div>
-            <strong>{attachment.filename}</strong>
-            <span>{attachment.media_type} · {formatBytes(attachment.size_bytes)}</span>
-            <code>{attachment.asset_id}</code>
-          </div>
-        </div>
+        <MessageAttachmentCard attachment={attachment} key={attachment.asset_id} />
       ))}
     </div>
   )
