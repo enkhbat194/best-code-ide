@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { ChatMessage, ToolCall } from '../types'
+import type { ChatAttachmentReference, ChatMessage, ToolCall } from '../types'
 import { runLocalAgent } from '../lib/localAgent'
 import { useSettingsStore } from './settingsStore'
 
@@ -8,7 +8,7 @@ interface ChatState {
   messages: ChatMessage[]
   isSending: boolean
   error: string | null
-  send: (text: string) => Promise<void>
+  send: (text: string, attachments?: ChatAttachmentReference[]) => Promise<boolean>
   stop: () => void
   clear: () => void
 }
@@ -33,22 +33,40 @@ export const useChatStore = create<ChatState>()(
         activeController?.abort()
       },
 
-      send: async (text: string) => {
+      send: async (text, attachments = []) => {
         const trimmed = text.trim()
-        if (!trimmed || get().isSending) return
+        if ((!trimmed && attachments.length === 0) || get().isSending) return false
 
         const settings = useSettingsStore.getState()
         if (!settings.backendUrl || !settings.authToken) {
           set({ error: 'Settings tab-с backend URL болон token-оо тохируулна уу.' })
-          return
+          return false
         }
 
-        const userMsg: ChatMessage = { id: newId(), role: 'user', content: trimmed, createdAt: Date.now() }
-        const assistantMsg: ChatMessage = { id: newId(), role: 'assistant', content: '', toolCalls: [], createdAt: Date.now() }
+        const visibleContent = trimmed || 'Хавсралт илгээв.'
+        const userMsg: ChatMessage = {
+          id: newId(),
+          role: 'user',
+          content: visibleContent,
+          attachments,
+          createdAt: Date.now(),
+        }
+        const assistantMsg: ChatMessage = {
+          id: newId(),
+          role: 'assistant',
+          content: '',
+          attachments,
+          toolCalls: [],
+          createdAt: Date.now(),
+        }
 
         const history = [...get().messages, userMsg]
-          .filter((message) => message.role !== 'tool' && message.content.trim())
-          .map((message) => ({ role: message.role as 'user' | 'assistant', content: message.content }))
+          .filter((message) => message.role !== 'tool' && (message.content.trim() || message.attachments?.length))
+          .map((message) => ({
+            role: message.role as 'user' | 'assistant',
+            content: message.content,
+            attachments: message.role === 'user' ? message.attachments : undefined,
+          }))
 
         set((state) => ({ messages: [...state.messages, userMsg, assistantMsg], isSending: true, error: null }))
 
@@ -105,6 +123,7 @@ export const useChatStore = create<ChatState>()(
           if (activeController === controller) activeController = null
           set({ isSending: false })
         }
+        return true
       },
     }),
     { name: 'codeide-chat', partialize: (state) => ({ messages: state.messages }) },
