@@ -98,10 +98,14 @@ test('processor resolution requires explicit production mode and an AI binding',
 
 test('Wrangler enables the private Workers AI binding without adding provider secrets or public R2', async () => {
   const wrangler = await readFile(new URL('../wrangler.toml', import.meta.url), 'utf8')
-  assert.match(wrangler, /\[ai\]\s*binding = "AI"/)
-  assert.match(wrangler, /VISION_PROCESSOR_MODE = "workers-ai"/)
-  assert.match(wrangler, /VISION_PROCESSOR_VERSION = "2026-07-08\.prompt-v1"/)
-  assert.doesNotMatch(wrangler, /r2\.dev|custom_domain|CLOUDFLARE_API_TOKEN\s*=/i)
+  const activeConfig = wrangler
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('#'))
+    .join('\n')
+  assert.match(activeConfig, /\[ai\]\s*binding = "AI"/)
+  assert.match(activeConfig, /VISION_PROCESSOR_MODE = "workers-ai"/)
+  assert.match(activeConfig, /VISION_PROCESSOR_VERSION = "2026-07-08\.prompt-v1"/)
+  assert.doesNotMatch(activeConfig, /r2\.dev|custom_domain|CLOUDFLARE_API_TOKEN\s*=/i)
 })
 
 test('installed PWA exposes a deterministic owner-visible private image recognition smoke test', () => {
