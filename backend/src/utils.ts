@@ -1,7 +1,18 @@
 export const CORS_HEADERS: HeadersInit = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, HEAD, POST, PUT, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Expose-Headers': 'Content-Type, Content-Length, Content-Disposition, ETag, X-BestCode-Asset-Max-Bytes',
+}
+
+export function withCors(response: Response): Response {
+  const headers = new Headers(response.headers)
+  new Headers(CORS_HEADERS).forEach((value, name) => headers.set(name, value))
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  })
 }
 
 export function jsonResponse(body: unknown, status = 200): Response {
