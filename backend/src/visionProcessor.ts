@@ -4,7 +4,7 @@ import type { ProcessorIdentity, VisionProcessorOutput } from './assetProcessing
 export const SUPPORTED_IMAGE_MEDIA_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
 export const CLOUDFLARE_MOONDREAM_MODEL = '@cf/moondream/moondream3.1-9B-A2B' as const
 export const CLOUDFLARE_MOONDREAM_PROCESSOR = 'cloudflare-workers-ai-moondream3.1' as const
-export const CLOUDFLARE_MOONDREAM_PROMPT_VERSION = '2026-07-08.prompt-v1' as const
+export const CLOUDFLARE_MOONDREAM_PROMPT_VERSION = '2026-07-23.prompt-v2' as const
 
 export interface ImagePolicy {
   maxBytes: number
@@ -38,6 +38,8 @@ export interface VisionProcessor extends ProcessorIdentity {
 export class VisionPolicyError extends Error {
   constructor(readonly code: string) { super(code) }
 }
+
+export class VisionProviderError extends VisionPolicyError {}
 
 function configuredInteger(value: string | undefined, fallback: number, maximum: number): number {
   const parsed = Number(value)
@@ -193,17 +195,68 @@ function record(value: unknown): Record<string, unknown> | null {
     : null
 }
 
-function jsonAnswer(value: unknown): Record<string, unknown> {
-  if (record(value)) return value as Record<string, unknown>
-  if (typeof value !== 'string') throw new Error('provider_result_invalid')
+function providerErrorText(error: unknown, depth = 0): string {
+  if (depth > 2 || error === null || error === undefined) return ''
+  if (typeof error === 'string' || typeof error === 'number') return String(error)
+  if (error instanceof Error) {
+    return [error.name, error.message, providerErrorText(error.cause, depth + 1)].filter(Boolean).join(' ')
+  }
+  const value = record(error)
+  if (!value) return String(error)
+  return [
+    value.name,
+    value.code,
+    value.status,
+    value.message,
+    value.error,
+    providerErrorText(value.cause, depth + 1),
+  ].filter((item) => typeof item === 'string' || typeof item === 'number').join(' ')
+}
+
+function providerErrorCode(error: unknown): string {
+  const text = providerErrorText(error).toLowerCase()
+  if (/5007|no such model|model[^a-z0-9]+(?:not found|unavailable)|unknown model/.test(text)) {
+    return 'provider_model_unavailable'
+  }
+  if (/5004|invalid data|invalid.*base64|base64.*invalid|invalid.*image|bad request|http.?400/.test(text)) {
+    return 'provider_invalid_request'
+  }
+  if (/permission|forbidden|not authorized|unauthorized|access denied|workers ai.*(?:disabled|not enabled)/.test(text)) {
+    return 'provider_access_denied'
+  }
+  if (/429|rate.?limit|capacity|overload|temporar(?:y|ily) unavailable|http.?503|service unavailable/.test(text)) {
+    return 'provider_capacity'
+  }
+  return 'provider_failure'
+}
+
+function parsedAnswer(value: unknown): { output: Record<string, unknown>; warning: string | null } {
+  if (record(value)) return { output: value as Record<string, unknown>, warning: null }
+  if (typeof value !== 'string' || !value.trim()) throw new VisionProviderError('provider_result_invalid')
   const trimmed = value.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
   const start = trimmed.indexOf('{')
   const end = trimmed.lastIndexOf('}')
-  if (start < 0 || end <= start) throw new Error('provider_result_invalid')
-  const parsed = JSON.parse(trimmed.slice(start, end + 1)) as unknown
-  const result = record(parsed)
-  if (!result) throw new Error('provider_result_invalid')
-  return result
+  if (start >= 0 && end > start) {
+    try {
+      const result = record(JSON.parse(trimmed.slice(start, end + 1)) as unknown)
+      if (result) return { output: result, warning: null }
+    } catch {
+      // A valid natural-language answer is still useful evidence when structured JSON is malformed.
+    }
+  }
+  return {
+    output: {
+      summary: trimmed,
+      visible_text: trimmed,
+      objects: [],
+      concepts: [],
+      code_or_ui_detected: false,
+      language: null,
+      confidence: 0,
+      warnings: ['provider_unstructured_text'],
+    },
+    warning: 'provider_unstructured_text',
+  }
 }
 
 function requestId(value: Record<string, unknown>): string | null {
@@ -235,20 +288,52 @@ export class CloudflareMoondreamVisionProcessor implements VisionProcessor {
     this.version = version
   }
 
-  async process(input: VisionProcessorInput, signal: AbortSignal): Promise<VisionProcessorOutput> {
-    const response = await abortable(this.ai.run(CLOUDFLARE_MOONDREAM_MODEL, {
+  private async query(image: string, signal: AbortSignal): Promise<Record<string, unknown>> {
+    const primary = {
       task: 'query',
-      image: `data:${input.mediaType};base64,${base64(input.bytes)}`,
+      image,
       question: MOONDREAM_QUESTION,
       reasoning: false,
       temperature: 0,
       top_p: 0.1,
       max_tokens: 2_500,
       stream: false,
-    }), signal)
-    const envelope = record(response)
-    if (!envelope) throw new Error('provider_result_invalid')
-    const output = jsonAnswer(envelope.answer)
+    }
+    try {
+      const response = await abortable(this.ai.run(CLOUDFLARE_MOONDREAM_MODEL, primary), signal)
+      const envelope = record(response)
+      if (!envelope) throw new VisionProviderError('provider_result_invalid')
+      return envelope
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') throw error
+      if (error instanceof VisionProviderError) throw error
+      const firstCode = providerErrorCode(error)
+      if (!['provider_invalid_request', 'provider_failure'].includes(firstCode)) {
+        throw new VisionProviderError(firstCode)
+      }
+      try {
+        const response = await abortable(this.ai.run(CLOUDFLARE_MOONDREAM_MODEL, {
+          task: 'query',
+          image,
+          question: MOONDREAM_QUESTION,
+          reasoning: false,
+          stream: false,
+        }), signal)
+        const envelope = record(response)
+        if (!envelope) throw new VisionProviderError('provider_result_invalid')
+        return envelope
+      } catch (retryError) {
+        if (retryError instanceof DOMException && retryError.name === 'AbortError') throw retryError
+        if (retryError instanceof VisionProviderError) throw retryError
+        throw new VisionProviderError(providerErrorCode(retryError))
+      }
+    }
+  }
+
+  async process(input: VisionProcessorInput, signal: AbortSignal): Promise<VisionProcessorOutput> {
+    const envelope = await this.query(`data:${input.mediaType};base64,${base64(input.bytes)}`, signal)
+    const { output, warning } = parsedAnswer(envelope.answer)
+    const outputWarnings = Array.isArray(output.warnings) ? output.warnings : []
     return {
       summary: output.summary,
       visible_text: output.visible_text,
@@ -257,9 +342,11 @@ export class CloudflareMoondreamVisionProcessor implements VisionProcessor {
       code_or_ui_detected: output.code_or_ui_detected,
       language: output.language,
       confidence: output.confidence,
-      warnings: Array.isArray(output.warnings)
-        ? [...output.warnings, 'cloudflare_workers_ai_derived_interpretation']
-        : ['cloudflare_workers_ai_derived_interpretation'],
+      warnings: [
+        ...outputWarnings,
+        ...(warning ? [warning] : []),
+        'cloudflare_workers_ai_derived_interpretation',
+      ],
       provider_request_id: requestId(envelope),
     }
   }
