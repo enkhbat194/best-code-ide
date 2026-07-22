@@ -74,7 +74,12 @@ async function jsonRequest<T>(path: string, init: RequestInit = {}): Promise<T> 
   const headers = new Headers(init.headers)
   headers.set('Authorization', `Bearer ${settings.authToken}`)
   if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
-  const response = await fetch(`${settings.backendUrl}${path}`, { ...init, headers })
+  let response: Response
+  try {
+    response = await fetch(`${settings.backendUrl}${path}`, { ...init, headers })
+  } catch {
+    throw new Error('Backend-тэй холбогдож чадсангүй. Сүлжээ эсвэл app origin тохиргоог шалгаад Retry дарна уу.')
+  }
   if (!response.ok) throw new Error(await errorMessage(response, 'Asset хүсэлт амжилтгүй'))
   return response.json() as Promise<T>
 }
@@ -163,7 +168,7 @@ export function uploadAssetContent(
     request.upload.onprogress = (event) => {
       if (event.lengthComputable && event.total > 0) onProgress(Math.min(99, Math.round((event.loaded / event.total) * 100)))
     }
-    request.onerror = () => reject(new Error('Сүлжээ тасарсан тул upload дууссан эсэхийг баталгаажуулж чадсангүй. Retry ашиглана уу.'))
+    request.onerror = () => reject(new Error('Сүлжээ эсвэл app origin алдааны улмаас upload дууссан эсэхийг баталгаажуулж чадсангүй. Retry ашиглана уу.'))
     request.onabort = () => reject(new DOMException('Aborted', 'AbortError'))
     request.onload = () => {
       signal?.removeEventListener('abort', abort)
