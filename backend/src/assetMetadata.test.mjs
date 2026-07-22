@@ -247,7 +247,7 @@ test('duplicate and idempotency indexes remain project-isolated', async () => {
   assert.equal(otherProject.json.asset.project_id, 'other-project')
 })
 
-test('asset foundation preserves existing security and avoids premature R2 production binding', () => {
+test('asset foundation preserves security and locks the approved private R2 production binding', () => {
   assert.match(typesSource, /MAX_ASSET_BYTES\?: string/)
   assert.match(brainApiSource, /X-BestCode-Asset-Max-Bytes/)
   assert.match(assetStoreSource, /buildAssetDuplicateKey/)
@@ -256,6 +256,8 @@ test('asset foundation preserves existing security and avoids premature R2 produ
   assert.match(indexSource, /persistSecurityAudit/)
   assert.match(filesSource, /Direct changes to main\/master are blocked/)
   assert.match(securitySource, /redactSensitive/)
-  assert.doesNotMatch(wranglerSource, /\[\[r2_buckets\]\]|name = "ASSETS"/)
+  assert.match(wranglerSource, /\[\[r2_buckets\]\][\s\S]*binding = "ASSET_BUCKET"[\s\S]*bucket_name = "best-code-ide-assets-prod"/)
+  assert.doesNotMatch(wranglerSource, /name = "ASSETS"/)
+  assert.match(wranglerSource, /No r2\.dev public URL/)
   assert.match(wranglerSource, /name = "BRAIN_STORE"/)
 })

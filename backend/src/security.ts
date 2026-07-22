@@ -4,6 +4,7 @@ export const DEFAULT_MAX_REQUEST_BYTES = 1_048_576
 export const DEFAULT_CHAT_REQUEST_BYTES = 2_097_152
 export const DEFAULT_FILE_REQUEST_BYTES = 5_242_880
 export const DEFAULT_WORKSPACE_REQUEST_BYTES = 10_485_760
+export const DEFAULT_ASSET_REQUEST_BYTES = 104_857_600
 export const DEFAULT_RATE_LIMIT = 120
 export const DEFAULT_OWNER_RATE_LIMIT = 600
 export const DEFAULT_UNAUTHORIZED_RATE_LIMIT = 30
@@ -13,12 +14,14 @@ const SENSITIVE_KEY = /(?:authorization|api[_-]?key|access[_-]?token|refresh[_-]
 const BEARER_TOKEN = /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi
 const QUERY_SECRET = /([?&](?:key|token|api_key|access_token|auth)=)[^&#\s]+/gi
 const COMMON_SECRET = /\b(?:sk|rk|ghp|github_pat|xox[baprs]|AIza)[-_A-Za-z0-9]{12,}\b/g
+const ASSET_CONTENT_PATH = /^\/api\/brain\/assets\/[A-Za-z0-9._:-]{3,64}\/content$/
 
 export interface RequestLimitConfig {
   defaultBytes: number
   chatBytes: number
   fileBytes: number
   workspaceBytes: number
+  assetBytes: number
 }
 
 export interface RateLimitProfile {
@@ -67,6 +70,7 @@ export function requestLimitFor(url: URL, config: RequestLimitConfig): number {
   if (url.pathname === '/api/chat' || url.pathname === '/api/llm' || url.pathname === '/mcp') {
     return config.chatBytes
   }
+  if (ASSET_CONTENT_PATH.test(url.pathname)) return config.assetBytes
   if (url.pathname === '/api/files/commit') return config.fileBytes
   if (url.pathname === '/api/workspace/export') return config.workspaceBytes
   return config.defaultBytes

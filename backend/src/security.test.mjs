@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  DEFAULT_ASSET_REQUEST_BYTES,
   DEFAULT_CHAT_REQUEST_BYTES,
   DEFAULT_FILE_REQUEST_BYTES,
   DEFAULT_MAX_REQUEST_BYTES,
@@ -24,6 +25,7 @@ const config = {
   chatBytes: DEFAULT_CHAT_REQUEST_BYTES,
   fileBytes: DEFAULT_FILE_REQUEST_BYTES,
   workspaceBytes: DEFAULT_WORKSPACE_REQUEST_BYTES,
+  assetBytes: DEFAULT_ASSET_REQUEST_BYTES,
 }
 
 const rateProfile = {
@@ -62,7 +64,7 @@ test('request limit rejects invalid content length', async () => {
   assert.equal(response?.status, 400)
 })
 
-test('route-aware limits reserve larger envelopes for code and workspace payloads', () => {
+test('route-aware limits reserve larger envelopes for code, workspace, and binary assets', () => {
   assert.equal(requestLimitFor(new URL('https://bestcode.test/api/chat'), config), DEFAULT_CHAT_REQUEST_BYTES)
   assert.equal(requestLimitFor(new URL('https://bestcode.test/api/llm'), config), DEFAULT_CHAT_REQUEST_BYTES)
   assert.equal(requestLimitFor(new URL('https://bestcode.test/mcp'), config), DEFAULT_CHAT_REQUEST_BYTES)
@@ -70,6 +72,10 @@ test('route-aware limits reserve larger envelopes for code and workspace payload
   assert.equal(
     requestLimitFor(new URL('https://bestcode.test/api/workspace/export'), config),
     DEFAULT_WORKSPACE_REQUEST_BYTES,
+  )
+  assert.equal(
+    requestLimitFor(new URL('https://bestcode.test/api/brain/assets/asset-file-0001/content'), config),
+    DEFAULT_ASSET_REQUEST_BYTES,
   )
   assert.equal(requestLimitFor(new URL('https://bestcode.test/api/tasks'), config), DEFAULT_MAX_REQUEST_BYTES)
 })

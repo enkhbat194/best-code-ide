@@ -1,5 +1,6 @@
 import { handleActions } from './actions'
 import { handleApprovals } from './approvals'
+import { handleAssetBinaryApi } from './assetBinaryApi'
 import { handleBrainApi } from './brainApi'
 import { handleChat } from './chat'
 import { handleFilesCommit } from './files'
@@ -11,6 +12,7 @@ import { openapiSpec } from './openapi'
 import { handleRelease, healthPayload } from './release'
 import { handleRest } from './rest'
 import {
+  DEFAULT_ASSET_REQUEST_BYTES,
   DEFAULT_CHAT_REQUEST_BYTES,
   DEFAULT_FILE_REQUEST_BYTES,
   DEFAULT_MAX_REQUEST_BYTES,
@@ -90,6 +92,7 @@ export default {
       chatBytes: parsePositiveInteger(resolveSecret(env, 'MAX_CHAT_REQUEST_BYTES'), DEFAULT_CHAT_REQUEST_BYTES),
       fileBytes: parsePositiveInteger(resolveSecret(env, 'MAX_FILE_REQUEST_BYTES'), DEFAULT_FILE_REQUEST_BYTES),
       workspaceBytes: parsePositiveInteger(resolveSecret(env, 'MAX_WORKSPACE_REQUEST_BYTES'), DEFAULT_WORKSPACE_REQUEST_BYTES),
+      assetBytes: parsePositiveInteger(resolveSecret(env, 'MAX_ASSET_BYTES'), DEFAULT_ASSET_REQUEST_BYTES),
     })
     const limitResponse = enforceRequestLimits(req, requestLimit)
     if (limitResponse) {
@@ -126,6 +129,12 @@ export default {
 
     const securityAuditResponse = await handleSecurityAudit(req, env, url)
     if (securityAuditResponse) return securityAuditResponse
+
+    const assetBinaryResponse = await handleAssetBinaryApi(req, env, url)
+    if (assetBinaryResponse) {
+      audit('asset_binary_api', { path: url.pathname, method: req.method, status: assetBinaryResponse.status, identity })
+      return assetBinaryResponse
+    }
 
     const brainResponse = await handleBrainApi(req, env, url)
     if (brainResponse) {
