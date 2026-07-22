@@ -39,22 +39,30 @@ function input() {
   }
 }
 
-test('Cloudflare Moondream adapter sends private bytes through the Workers AI binding and parses strict JSON', async () => {
+const structuredAnswer = JSON.stringify({
+  summary: 'Туршилтын зураг',
+  visible_text: 'BESTCODE-VISION-7265',
+  objects: ['circle', 'rectangle'],
+  concepts: ['vision test'],
+  code_or_ui_detected: false,
+  language: 'en',
+  confidence: 0.92,
+  warnings: [],
+})
+
+test('Cloudflare Moondream adapter sends private bytes through the Workers AI binding and parses the documented root answer', async () => {
   let called = null
   const ai = {
     async run(model, payload) {
       called = { model, payload }
-      return {
-        request_id: 'cf-request-123',
-        answer: '```json\n{"summary":"Туршилтын зураг","visible_text":"BESTCODE-VISION-7265","objects":["circle","rectangle"],"concepts":["vision test"],"code_or_ui_detected":false,"language":"en","confidence":0.92,"warnings":[]}\n```',
-      }
+      return { request_id: 'cf-request-123', answer: `\`\`\`json\n${structuredAnswer}\n\`\`\`` }
     },
   }
-  const processor = new CloudflareMoondreamVisionProcessor(ai, 'adapter-test-v2')
+  const processor = new CloudflareMoondreamVisionProcessor(ai, 'adapter-test-v3')
   const output = await processor.process(input(), new AbortController().signal)
 
   assert.equal(processor.name, CLOUDFLARE_MOONDREAM_PROCESSOR)
-  assert.equal(processor.version, 'adapter-test-v2')
+  assert.equal(processor.version, 'adapter-test-v3')
   assert.equal(called.model, CLOUDFLARE_MOONDREAM_MODEL)
   assert.equal(called.payload.task, 'query')
   assert.equal(called.payload.reasoning, false)
@@ -67,6 +75,38 @@ test('Cloudflare Moondream adapter sends private bytes through the Workers AI bi
   assert.deepEqual(output.objects, ['circle', 'rectangle'])
   assert.equal(output.provider_request_id, 'cf-request-123')
   assert.ok(output.warnings.includes('cloudflare_workers_ai_derived_interpretation'))
+})
+
+test('Cloudflare Moondream adapter normalizes nested, response, text, and direct-string envelopes', async () => {
+  const variants = [
+    { result: { answer: structuredAnswer }, request_id: 'nested-result' },
+    { output: { response: structuredAnswer }, id: 'nested-output' },
+    { data: { text: structuredAnswer } },
+    structuredAnswer,
+  ]
+  for (const response of variants) {
+    const processor = new CloudflareMoondreamVisionProcessor({ async run() { return response } })
+    const output = await processor.process(input(), new AbortController().signal)
+    assert.equal(output.summary, 'Туршилтын зураг')
+    assert.equal(output.visible_text, 'BESTCODE-VISION-7265')
+  }
+})
+
+test('Cloudflare Moondream adapter consumes an unexpected SSE ReadableStream without exposing metadata as recognition text', async () => {
+  const encoder = new TextEncoder()
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(encoder.encode('data: {"response":"BESTCODE-VISION-"}\n\n'))
+      controller.enqueue(encoder.encode('data: {"response":"7265 blue circle green rectangle"}\n\n'))
+      controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+      controller.close()
+    },
+  })
+  const processor = new CloudflareMoondreamVisionProcessor({ async run() { return stream } })
+  const output = await processor.process(input(), new AbortController().signal)
+  assert.match(output.summary, /BESTCODE-VISION-7265/)
+  assert.match(output.visible_text, /blue circle green rectangle/)
+  assert.ok(output.warnings.includes('provider_unstructured_text'))
 })
 
 test('Cloudflare Moondream adapter preserves useful unstructured recognition text instead of failing the job', async () => {
@@ -83,30 +123,34 @@ test('Cloudflare Moondream adapter preserves useful unstructured recognition tex
   assert.equal(output.provider_request_id, 'plain-1')
 })
 
-test('Cloudflare Moondream adapter retries an invalid rich payload with the documented minimal query contract', async () => {
-  const calls = []
-  const processor = new CloudflareMoondreamVisionProcessor({
-    async run(model, payload) {
-      calls.push({ model, payload })
-      if (calls.length === 1) {
-        const error = new Error('Invalid data type for base64 input')
-        error.code = 5004
-        throw error
-      }
-      return { answer: '{"summary":"fallback ok","visible_text":"BESTCODE-VISION-7265"}' }
-    },
-  })
-  const output = await processor.process(input(), new AbortController().signal)
-  assert.equal(calls.length, 2)
-  assert.equal(calls[1].model, CLOUDFLARE_MOONDREAM_MODEL)
-  assert.equal(calls[1].payload.task, 'query')
-  assert.equal(calls[1].payload.stream, false)
-  assert.equal('temperature' in calls[1].payload, false)
-  assert.equal('max_tokens' in calls[1].payload, false)
-  assert.equal(output.summary, 'fallback ok')
+test('Cloudflare Moondream adapter retries invalid payloads and invalid response shapes with the minimal query contract', async () => {
+  for (const first of [new Error('Invalid data type for base64 input'), { finish_reason: 'stop', metrics: {} }]) {
+    const calls = []
+    const processor = new CloudflareMoondreamVisionProcessor({
+      async run(model, payload) {
+        calls.push({ model, payload })
+        if (calls.length === 1) {
+          if (first instanceof Error) {
+            first.code = 5004
+            throw first
+          }
+          return first
+        }
+        return { result: { answer: '{"summary":"fallback ok","visible_text":"BESTCODE-VISION-7265"}' } }
+      },
+    })
+    const output = await processor.process(input(), new AbortController().signal)
+    assert.equal(calls.length, 2)
+    assert.equal(calls[1].model, CLOUDFLARE_MOONDREAM_MODEL)
+    assert.equal(calls[1].payload.task, 'query')
+    assert.equal(calls[1].payload.stream, false)
+    assert.equal('temperature' in calls[1].payload, false)
+    assert.equal('max_tokens' in calls[1].payload, false)
+    assert.equal(output.summary, 'fallback ok')
+  }
 })
 
-test('Cloudflare Moondream adapter exposes safe provider codes and honors timeout abort', async () => {
+test('Cloudflare Moondream adapter exposes safe provider codes, rejects empty metadata, and honors abort', async () => {
   const unavailable = new CloudflareMoondreamVisionProcessor({
     async run() {
       const error = new Error('No such model')
@@ -119,11 +163,13 @@ test('Cloudflare Moondream adapter exposes safe provider codes and honors timeou
     (error) => error instanceof VisionProviderError && error.code === 'provider_model_unavailable',
   )
 
-  const empty = new CloudflareMoondreamVisionProcessor({ async run() { return { answer: '' } } })
+  let emptyCalls = 0
+  const empty = new CloudflareMoondreamVisionProcessor({ async run() { emptyCalls += 1; return { answer: '', metrics: {} } } })
   await assert.rejects(
     () => empty.process(input(), new AbortController().signal),
     (error) => error instanceof VisionProviderError && error.code === 'provider_result_invalid',
   )
+  assert.equal(emptyCalls, 2)
 
   const controller = new AbortController()
   const hanging = new CloudflareMoondreamVisionProcessor({ run: () => new Promise(() => undefined) })
@@ -139,10 +185,10 @@ test('processor resolution requires explicit production mode and an AI binding',
   const processor = resolveVisionProcessor({
     AI: ai,
     VISION_PROCESSOR_MODE: 'workers-ai',
-    VISION_PROCESSOR_VERSION: 'production-v2',
+    VISION_PROCESSOR_VERSION: 'production-v3',
   })
   assert.ok(processor instanceof CloudflareMoondreamVisionProcessor)
-  assert.equal(processor.version, 'production-v2')
+  assert.equal(processor.version, 'production-v3')
 })
 
 test('Wrangler enables the private Workers AI binding without adding provider secrets or public R2', async () => {
@@ -153,7 +199,7 @@ test('Wrangler enables the private Workers AI binding without adding provider se
     .join('\n')
   assert.match(activeConfig, /\[ai\]\s*binding = "AI"/)
   assert.match(activeConfig, /VISION_PROCESSOR_MODE = "workers-ai"/)
-  assert.match(activeConfig, /VISION_PROCESSOR_VERSION = "2026-07-23\.prompt-v2"/)
+  assert.match(activeConfig, /VISION_PROCESSOR_VERSION = "2026-07-23\.prompt-v3"/)
   assert.doesNotMatch(activeConfig, /r2\.dev|custom_domain|CLOUDFLARE_API_TOKEN\s*=/i)
 })
 
