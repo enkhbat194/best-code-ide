@@ -1,3 +1,7 @@
+export interface WorkersAiBinding {
+  run(model: string, input: Record<string, unknown>): Promise<unknown>
+}
+
 export interface Env {
   DEEPSEEK_API_KEY?: string
   GITHUB_TOKEN: string
@@ -14,6 +18,7 @@ export interface Env {
   MAX_WORKSPACE_REQUEST_BYTES?: string
   MAX_ASSET_BYTES?: string
   ASSET_BUCKET?: R2Bucket
+  AI?: WorkersAiBinding
   VISION_PROCESSOR_MODE?: string
   VISION_PROCESSOR_VERSION?: string
   VISION_MAX_IMAGE_BYTES?: string
