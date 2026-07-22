@@ -23,6 +23,7 @@ export interface Env {
   }
   APPROVALS: DurableObjectNamespace
   SECURITY_AUDIT: DurableObjectNamespace
+  BRAIN_STORE: DurableObjectNamespace
 }
 
 export type Role = 'system' | 'user' | 'assistant' | 'tool'

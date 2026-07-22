@@ -13,3 +13,4 @@ Accepted:
 
 - `0001-project-brain-and-ai-roles.md` — Project Brain, source-of-truth болон AI-уудын үүрэг.
 - `0002-personal-creation-os.md` — Personal Creation OS, Second Brain, Asset Graph, Research/Evidence чиглэл.
+- `0003-chat-first-project-nervous-system.md` — Chat-first automatic 4B, Second Brain v2, universal AI gateway, write-back болон locked implementation packages.

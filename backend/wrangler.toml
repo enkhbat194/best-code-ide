@@ -26,6 +26,10 @@ class_name = "ApprovalStore"
 name = "SECURITY_AUDIT"
 class_name = "SecurityAuditStore"
 
+[[durable_objects.bindings]]
+name = "BRAIN_STORE"
+class_name = "BrainStore"
+
 [[migrations]]
 tag = "approval-store-v1"
 new_sqlite_classes = ["ApprovalStore"]
@@ -33,6 +37,10 @@ new_sqlite_classes = ["ApprovalStore"]
 [[migrations]]
 tag = "security-audit-store-v1"
 new_sqlite_classes = ["SecurityAuditStore"]
+
+[[migrations]]
+tag = "brain-store-v2"
+new_sqlite_classes = ["BrainStore"]
 
 [observability]
 enabled = true

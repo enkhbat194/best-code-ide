@@ -1,5 +1,6 @@
 import { handleActions } from './actions'
 import { handleApprovals } from './approvals'
+import { handleBrainApi } from './brainApi'
 import { handleChat } from './chat'
 import { handleFilesCommit } from './files'
 import { handleLlm } from './llm'
@@ -34,6 +35,7 @@ import { CORS_HEADERS, jsonError, jsonResponse, resolveSecret } from './utils'
 import type { Env } from './types'
 
 export { ApprovalStore } from './approvalStore'
+export { BrainStore } from './brainStore'
 export { SecurityAuditStore } from './securityAuditStore'
 
 async function digest(value: string): Promise<Uint8Array> {
@@ -124,6 +126,12 @@ export default {
 
     const securityAuditResponse = await handleSecurityAudit(req, env, url)
     if (securityAuditResponse) return securityAuditResponse
+
+    const brainResponse = await handleBrainApi(req, env, url)
+    if (brainResponse) {
+      audit('brain_api', { path: url.pathname, method: req.method, status: brainResponse.status, identity })
+      return brainResponse
+    }
 
     const missionResponse = await handleMissionApi(req, env, url)
     if (missionResponse) {
