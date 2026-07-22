@@ -333,8 +333,14 @@ export async function linkAssetDefaults(
   }
 
   await add('belongs_to_project', asset.project_id, true)
-  if (asset.mission_id) await add('used_by_mission', asset.mission_id, false)
-  if (asset.source_id) await add('attached_to_source', asset.source_id, false)
+  const requestedMissionId = input.mission_id === null || input.mission_id === undefined
+    ? asset.mission_id
+    : identifier(input.mission_id, 'mission_id')
+  const requestedSourceId = input.source_id === null || input.source_id === undefined
+    ? asset.source_id
+    : identifier(input.source_id, 'source_id')
+  if (requestedMissionId) await add('used_by_mission', requestedMissionId, false)
+  if (requestedSourceId) await add('attached_to_source', requestedSourceId, false)
 
   const agentRunId = cleanString(input.agent_run_id, 64)
   if (agentRunId) await add('generated_by', identifier(agentRunId, 'agent_run_id'), true)
