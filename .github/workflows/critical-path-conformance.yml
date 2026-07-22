@@ -42,4 +42,11 @@ jobs:
         run: node --import tsx --test src/criticalPaths.test.mjs
       - name: Typecheck backend
         working-directory: backend
-        run: npm run typecheck
+        run: npm run typecheck 2>&1 | tee critical-typecheck.log
+      - name: Upload critical typecheck log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: critical-typecheck-log
+          path: backend/critical-typecheck.log
+          if-no-files-found: warn
