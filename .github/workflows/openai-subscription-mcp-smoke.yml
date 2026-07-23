@@ -7,6 +7,11 @@ on:
         description: Type CREATE-OPENAI-AND-REVOKE to approve one short-lived production OpenAI credential lifecycle
         required: true
         type: string
+  push:
+    branches:
+      - main
+    paths:
+      - .github/triggers/openai-subscription-mcp-smoke.txt
 
 permissions:
   contents: read
@@ -17,7 +22,7 @@ concurrency:
 
 jobs:
   smoke:
-    if: ${{ inputs.confirm_live_credential == 'CREATE-OPENAI-AND-REVOKE' }}
+    if: ${{ github.event_name == 'push' || inputs.confirm_live_credential == 'CREATE-OPENAI-AND-REVOKE' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production
