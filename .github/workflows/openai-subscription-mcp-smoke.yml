@@ -61,7 +61,7 @@ jobs:
         with:
           node-version: 22
       - name: Test OpenAI-compatible smoke controller
-        run: node --test scripts/scoped-subscription-auth-smoke.test.mjs
+        run: node --test scripts/scoped-subscription-auth-smoke.test.mjs scripts/cloudflare-release-integrity-retry.test.mjs
       - name: Require protected production secrets
         shell: bash
         run: |
@@ -70,13 +70,16 @@ jobs:
           test -n "$BESTCODE_AUTH_TOKEN" || (echo "::error::BESTCODE_AUTH_TOKEN or AUTH_TOKEN is missing" && exit 1)
       - name: Require exact main deployment and 100 percent traffic
         run: >-
-          node scripts/cloudflare-release-integrity.mjs
+          node scripts/cloudflare-release-integrity-retry.mjs
+          --max-wait-seconds 900
+          --retry-poll-seconds 20
+          --
           --repository "$GITHUB_REPOSITORY"
           --branch main
           --expected-sha "$GITHUB_SHA"
           --repair-preview-triggers false
-          --wait-seconds 900
-          --poll-seconds 20
+          --wait-seconds 0
+          --poll-seconds 1
           --output artifacts/openai-mcp-release-integrity.json
       - name: Create, verify, and revoke OpenAI scoped credential
         run: >-
