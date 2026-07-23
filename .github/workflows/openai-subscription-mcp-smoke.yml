@@ -79,7 +79,7 @@ jobs:
           --expected-sha "$GITHUB_SHA"
           --repair-preview-triggers false
           --wait-seconds 0
-          --poll-seconds 1
+          --poll-seconds 5
           --output artifacts/openai-mcp-release-integrity.json
       - name: Create, verify, and revoke OpenAI scoped credential
         run: >-
