@@ -46,7 +46,7 @@ export interface GatewayRequestContext {
 
 export interface GatewayToolResult {
   content: { type: 'text'; text: string }[]
-  structuredContent: Record<string, unknown>
+  structuredContent: any
   isError?: boolean
 }
 
@@ -309,7 +309,7 @@ function addMetadata(
   durationMs: number,
 ): GatewayToolResult {
   const redacted = redactSecrets(result.structuredContent) as Record<string, unknown>
-  const structuredContent = {
+  const structuredContent: Record<string, unknown> = {
     ...redacted,
     request_id: context.request_id,
     actor: context.actor,
