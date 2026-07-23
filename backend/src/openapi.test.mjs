@@ -7,11 +7,11 @@ import { openapiSpec } from './openapi.ts'
 
 const deploymentSource = readFileSync(new URL('./mcpDeploymentTools.ts', import.meta.url), 'utf8')
 
-test('generated OpenAPI preserves version, schemas, and bearer authentication', () => {
+test('generated OpenAPI preserves version, schemas, bearer authentication, and gateway metadata', () => {
   const spec = openapiSpec('https://bestcode.test')
 
   assert.equal(spec.openapi, '3.1.0')
-  assert.equal(spec.info.version, '0.11.0')
+  assert.equal(spec.info.version, '0.12.0')
   assert.deepEqual(spec.security, [{ bearerAuth: [] }])
   assert.deepEqual(spec.components.securitySchemes.bearerAuth, {
     type: 'http',
@@ -21,6 +21,14 @@ test('generated OpenAPI preserves version, schemas, and bearer authentication', 
   assert.ok(spec.components.schemas.ToolEnvelope)
   assert.ok(spec.components.schemas.ToolError)
   assert.ok(spec.components.schemas.HttpError)
+  assert.deepEqual(spec.components.schemas.ToolEnvelope.properties.safety_class.enum, [
+    'read-only',
+    'write-without-approval',
+    'approval-required',
+    'irreversible',
+  ])
+  assert.ok(spec.components.schemas.ToolEnvelope.properties.request_id)
+  assert.ok(spec.components.schemas.ToolEnvelope.properties.audit)
 
   const operations = Object.values(spec.paths).map((path) => path.post)
   assert.ok(operations.length > 0)
