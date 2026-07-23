@@ -1,0 +1,76 @@
+name: Scoped Subscription Auth Production Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_live_credential:
+        description: Type CREATE-AND-REVOKE to approve one short-lived production credential lifecycle
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bestcode-scoped-subscription-auth-production-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    if: ${{ inputs.confirm_live_credential == 'CREATE-AND-REVOKE' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: production
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      BESTCODE_AUTH_TOKEN: ${{ secrets.BESTCODE_AUTH_TOKEN || secrets.AUTH_TOKEN }}
+      BESTCODE_BACKEND_URL: https://best-code-ide.enkhbat194.workers.dev
+      BESTCODE_PRODUCTION_WORKERS: >-
+        [{"name":"best-code-ide","root_directory":"backend"},{"name":"best-code-ide-appl","root_directory":"frontend"}]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Test scoped-auth controller
+        run: node --test scripts/scoped-subscription-auth-smoke.test.mjs
+      - name: Require protected production secrets
+        shell: bash
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN" || (echo "::error::CLOUDFLARE_API_TOKEN is missing" && exit 1)
+          test -n "$CLOUDFLARE_ACCOUNT_ID" || (echo "::error::CLOUDFLARE_ACCOUNT_ID is missing" && exit 1)
+          test -n "$BESTCODE_AUTH_TOKEN" || (echo "::error::BESTCODE_AUTH_TOKEN or AUTH_TOKEN is missing" && exit 1)
+      - name: Require exact main deployment and 100 percent traffic
+        run: >-
+          node scripts/cloudflare-release-integrity.mjs
+          --repository "$GITHUB_REPOSITORY"
+          --branch main
+          --expected-sha "$GITHUB_SHA"
+          --repair-preview-triggers false
+          --wait-seconds 900
+          --poll-seconds 20
+          --output artifacts/scoped-auth-release-integrity.json
+      - name: Create, verify, and revoke scoped production credential
+        run: >-
+          node scripts/scoped-subscription-auth-smoke.mjs
+          --backend-url "$BESTCODE_BACKEND_URL"
+          --project-id bestcode
+          --output artifacts/scoped-subscription-auth-smoke.json
+      - name: Scan evidence for scoped credential leaks
+        shell: bash
+        run: |
+          if grep -R -E 'bcsub_v1\.[a-f0-9-]{36}\.[A-Za-z0-9_-]{32,128}' artifacts; then
+            echo "::error::Scoped credential leaked into artifact"
+            exit 1
+          fi
+      - name: Upload redacted immutable evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scoped-subscription-auth-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/scoped-auth-release-integrity.json
+            artifacts/scoped-subscription-auth-smoke.json
+          if-no-files-found: warn
+          retention-days: 30
