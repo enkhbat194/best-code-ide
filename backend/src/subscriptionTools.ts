@@ -7,14 +7,13 @@ import { getProject, type ProjectConfig } from './projects'
 import type { Env } from './types'
 
 const GITHUB_API = 'https://api.github.com'
-
+const readAnnotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true } as const
 const outputSchema = {
   type: 'object',
   properties: {
     ok: { type: 'boolean' },
     operation_id: { type: 'string' },
     status: { type: 'string' },
-    request_id: { type: 'string' },
     project_id: { type: 'string' },
     repository: { type: 'object' },
     branch: { type: 'string' },
@@ -23,249 +22,181 @@ const outputSchema = {
   },
   required: ['ok', 'operation_id', 'status'],
 } as const
+const projectId = { type: 'string', minLength: 1, maxLength: 64 } as const
+const missionId = { type: 'string', pattern: '^[a-fA-F0-9-]{16,64}$' } as const
 
-const readAnnotations = {
-  readOnlyHint: true,
-  destructiveHint: false,
-  idempotentHint: true,
-  openWorldHint: true,
-} as const
-
-const projectIdSchema = { type: 'string', minLength: 1, maxLength: 64 } as const
-const missionIdSchema = { type: 'string', pattern: '^[a-fA-F0-9-]{16,64}$' } as const
+function readTool(
+  name: string,
+  title: string,
+  description: string,
+  properties: Record<string, unknown>,
+  required: string[] = ['project_id'],
+) {
+  return {
+    name,
+    title,
+    description,
+    inputSchema: { type: 'object', properties, required, additionalProperties: false },
+    outputSchema,
+    annotations: readAnnotations,
+  }
+}
 
 export const subscriptionMcpTools = [
-  {
-    name: 'projects_list',
-    title: 'List scoped BestCode projects',
-    description: 'List the single project bound to this authenticated subscription-agent gateway URL.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-    outputSchema,
-    annotations: readAnnotations,
-  },
-  {
-    name: 'project_get',
-    title: 'Get scoped project',
-    description: 'Read repository metadata for the project bound to this subscription-agent gateway.',
-    inputSchema: {
-      type: 'object',
-      properties: { project_id: projectIdSchema },
-      required: ['project_id'],
-      additionalProperties: false,
+  readTool(
+    'projects_list',
+    'List scoped BestCode projects',
+    'List the single project bound to this authenticated subscription-agent gateway URL.',
+    {},
+    [],
+  ),
+  readTool(
+    'project_get',
+    'Get scoped project',
+    'Read repository metadata for the project bound to this subscription-agent gateway.',
+    { project_id: projectId },
+  ),
+  readTool(
+    'brain_search',
+    'Search Project Brain',
+    'Search canonical Project Brain documents and return bounded line-numbered evidence.',
+    {
+      project_id: projectId,
+      query: { type: 'string', minLength: 1, maxLength: 1000 },
+      limit: { type: 'integer', minimum: 1, maximum: 30, default: 12 },
+      context_lines: { type: 'integer', minimum: 0, maximum: 4, default: 1 },
     },
-    outputSchema,
-    annotations: readAnnotations,
-  },
-  {
-    name: 'brain_search',
-    title: 'Search Project Brain',
-    description: 'Search configured canonical Project Brain documents and return bounded line-numbered evidence.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        project_id: projectIdSchema,
-        query: { type: 'string', minLength: 1, maxLength: 1000 },
-        limit: { type: 'integer', minimum: 1, maximum: 30, default: 12 },
-        context_lines: { type: 'integer', minimum: 0, maximum: 4, default: 1 },
-      },
-      required: ['project_id', 'query'],
-      additionalProperties: false,
+    ['project_id', 'query'],
+  ),
+  readTool(
+    'brain_export_summary',
+    'Export shared project context',
+    'Build provider-neutral context from Project Brain, Mission, repository, approval, and CI evidence.',
+    {
+      project_id: projectId,
+      max_chars_per_document: { type: 'integer', minimum: 1000, maximum: 20000, default: 8000 },
+      max_total_document_chars: { type: 'integer', minimum: 5000, maximum: 60000, default: 30000 },
     },
-    outputSchema,
-    annotations: readAnnotations,
-  },
-  {
-    name: 'brain_export_summary',
-    title: 'Export shared project context',
-    description: 'Build one provider-neutral context summary from Project Brain, Mission, repository, approvals, and CI evidence.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        project_id: projectIdSchema,
-        max_chars_per_document: { type: 'integer', minimum: 1000, maximum: 20000, default: 8000 },
-        max_total_document_chars: { type: 'integer', minimum: 5000, maximum: 60000, default: 30000 },
-      },
-      required: ['project_id'],
-      additionalProperties: false,
+  ),
+  readTool(
+    'mission_get',
+    'Get scoped Mission',
+    'Read one Mission only when its project matches the gateway project scope.',
+    { project_id: projectId, mission_id: missionId },
+    ['project_id', 'mission_id'],
+  ),
+  readTool(
+    'mission_context_get',
+    'Get Mission context',
+    'Return a provider-neutral Mission context packet after enforcing project scope.',
+    { project_id: projectId, mission_id: missionId },
+    ['project_id', 'mission_id'],
+  ),
+  readTool(
+    'repository_status',
+    'Read repository operation status',
+    'List recent staged repository operations and approval states without changing them.',
+    {
+      project_id: projectId,
+      status: { type: 'string', maxLength: 60 },
+      limit: { type: 'integer', minimum: 1, maximum: 100, default: 30 },
     },
-    outputSchema,
-    annotations: readAnnotations,
-  },
-  {
-    name: 'mission_get',
-    title: 'Get scoped Mission',
-    description: 'Read one Mission only when its project matches the gateway project scope.',
-    inputSchema: {
-      type: 'object',
-      properties: { project_id: projectIdSchema, mission_id: missionIdSchema },
-      required: ['project_id', 'mission_id'],
-      additionalProperties: false,
+  ),
+  readTool(
+    'repository_read_file',
+    'Read repository file',
+    'Read a bounded UTF-8 file range after strict repository-path validation.',
+    {
+      project_id: projectId,
+      branch: { type: 'string', maxLength: 160 },
+      path: { type: 'string', minLength: 1, maxLength: 240 },
+      cursor: { type: 'string', maxLength: 100 },
+      line_limit: { type: 'integer', minimum: 1, maximum: 400, default: 200 },
     },
-    outputSchema,
-    annotations: readAnnotations,
-  },
-  {
-    name: 'mission_context_get',
-    title: 'Get Mission context',
-    description: 'Return the provider-neutral Mission context packet after enforcing project scope.',
-    inputSchema: {
-      type: 'object',
-      properties: { project_id: projectIdSchema, mission_id: missionIdSchema },
-      required: ['project_id', 'mission_id'],
-      additionalProperties: false,
+    ['project_id', 'path'],
+  ),
+  readTool(
+    'repository_search',
+    'Search repository',
+    'Search indexed repository code by text, symbol, filename, or error text.',
+    {
+      project_id: projectId,
+      query: { type: 'string', minLength: 1, maxLength: 1000 },
+      limit: { type: 'integer', minimum: 1, maximum: 50, default: 20 },
     },
-    outputSchema,
-    annotations: readAnnotations,
-  },
-  {
-    name: 'repository_status',
-    title: 'Read repository operation status',
-    description: 'List recent staged repository operations and approval states without changing them.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        project_id: projectIdSchema,
-        status: { type: 'string', maxLength: 60 },
-        limit: { type: 'integer', minimum: 1, maximum: 100, default: 30 },
-      },
-      required: ['project_id'],
-      additionalProperties: false,
+    ['project_id', 'query'],
+  ),
+  readTool(
+    'pull_request_status',
+    'Read pull request status',
+    'Read a pull request by number or list pull requests associated with one branch.',
+    {
+      project_id: projectId,
+      number: { type: 'integer', minimum: 1 },
+      branch: { type: 'string', maxLength: 160 },
+      state: { type: 'string', enum: ['open', 'closed', 'all'], default: 'all' },
+      limit: { type: 'integer', minimum: 1, maximum: 30, default: 10 },
     },
-    outputSchema,
-    annotations: readAnnotations,
-  },
-  {
-    name: 'repository_read_file',
-    title: 'Read repository file',
-    description: 'Read a bounded UTF-8 file range after strict repository-path validation.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        project_id: projectIdSchema,
-        branch: { type: 'string', maxLength: 160 },
-        path: { type: 'string', minLength: 1, maxLength: 240 },
-        cursor: { type: 'string', maxLength: 100 },
-        line_limit: { type: 'integer', minimum: 1, maximum: 400, default: 200 },
-      },
-      required: ['project_id', 'path'],
-      additionalProperties: false,
+  ),
+  readTool(
+    'deployment_status',
+    'Read deployment status',
+    'Read a deployment task or approval operation without starting a deployment.',
+    {
+      project_id: projectId,
+      task_id: { type: 'string', maxLength: 100 },
+      approval_operation_id: { type: 'string', maxLength: 100 },
     },
-    outputSchema,
-    annotations: readAnnotations,
-  },
-  {
-    name: 'repository_search',
-    title: 'Search repository',
-    description: 'Search indexed repository code by text, symbol, filename, or error text.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        project_id: projectIdSchema,
-        query: { type: 'string', minLength: 1, maxLength: 1000 },
-        limit: { type: 'integer', minimum: 1, maximum: 50, default: 20 },
-      },
-      required: ['project_id', 'query'],
-      additionalProperties: false,
-    },
-    outputSchema,
-    annotations: readAnnotations,
-  },
-  {
-    name: 'pull_request_status',
-    title: 'Read pull request status',
-    description: 'Read a pull request by number or list pull requests associated with one branch.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        project_id: projectIdSchema,
-        number: { type: 'integer', minimum: 1 },
-        branch: { type: 'string', maxLength: 160 },
-        state: { type: 'string', enum: ['open', 'closed', 'all'], default: 'all' },
-        limit: { type: 'integer', minimum: 1, maximum: 30, default: 10 },
-      },
-      required: ['project_id'],
-      additionalProperties: false,
-    },
-    outputSchema,
-    annotations: readAnnotations,
-  },
-  {
-    name: 'deployment_status',
-    title: 'Read deployment status',
-    description: 'Read a deployment workflow task or deployment approval operation without starting a deployment.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        project_id: projectIdSchema,
-        task_id: { type: 'string', maxLength: 100 },
-        approval_operation_id: { type: 'string', maxLength: 100 },
-      },
-      required: ['project_id'],
-      additionalProperties: false,
-    },
-    outputSchema,
-    annotations: readAnnotations,
-  },
-  {
-    name: 'handoff_packet_build',
-    title: 'Build cross-agent handoff packet',
-    description: 'Build a deterministic provider-neutral handoff packet grounded in the scoped repository and optional Mission.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        project_id: projectIdSchema,
-        mission_id: missionIdSchema,
-        branch: { type: 'string', maxLength: 160 },
-        objective: { type: 'string', minLength: 1, maxLength: 4000 },
-        completed_work: { type: 'array', maxItems: 100, items: { type: 'string', maxLength: 1000 } },
-        changed_files: {
-          type: 'array',
-          maxItems: 300,
-          items: {
-            type: 'object',
-            properties: {
-              path: { type: 'string', minLength: 1, maxLength: 240 },
-              status: { type: 'string', maxLength: 40 },
-            },
-            required: ['path'],
-            additionalProperties: false,
-          },
-        },
-        test_status: {
+  ),
+  readTool(
+    'handoff_packet_build',
+    'Build cross-agent handoff packet',
+    'Build a deterministic provider-neutral handoff grounded in the scoped repository and optional Mission.',
+    {
+      project_id: projectId,
+      mission_id: missionId,
+      branch: { type: 'string', maxLength: 160 },
+      objective: { type: 'string', minLength: 1, maxLength: 4000 },
+      completed_work: { type: 'array', maxItems: 100, items: { type: 'string', maxLength: 1000 } },
+      changed_files: {
+        type: 'array',
+        maxItems: 300,
+        items: {
           type: 'object',
           properties: {
-            state: { type: 'string', maxLength: 40 },
-            summary: { type: 'string', maxLength: 2000 },
-            evidence_references: { type: 'array', maxItems: 100, items: { type: 'string', maxLength: 500 } },
+            path: { type: 'string', minLength: 1, maxLength: 240 },
+            status: { type: 'string', maxLength: 40 },
           },
+          required: ['path'],
           additionalProperties: false,
         },
-        unresolved_issues: { type: 'array', maxItems: 100, items: { type: 'string', maxLength: 1000 } },
-        decisions_required: { type: 'array', maxItems: 100, items: { type: 'string', maxLength: 1000 } },
-        safety_constraints: { type: 'array', maxItems: 100, items: { type: 'string', maxLength: 1000 } },
-        next_exact_action: { type: 'string', minLength: 1, maxLength: 2000 },
-        source_references: { type: 'array', maxItems: 100, items: { type: 'string', maxLength: 500 } },
-        evidence_references: { type: 'array', maxItems: 100, items: { type: 'string', maxLength: 500 } },
       },
-      required: ['project_id', 'objective', 'next_exact_action'],
-      additionalProperties: false,
+      test_status: {
+        type: 'object',
+        properties: {
+          state: { type: 'string', maxLength: 40 },
+          summary: { type: 'string', maxLength: 2000 },
+          evidence_references: { type: 'array', maxItems: 100, items: { type: 'string', maxLength: 500 } },
+        },
+        additionalProperties: false,
+      },
+      unresolved_issues: { type: 'array', maxItems: 100, items: { type: 'string', maxLength: 1000 } },
+      decisions_required: { type: 'array', maxItems: 100, items: { type: 'string', maxLength: 1000 } },
+      safety_constraints: { type: 'array', maxItems: 100, items: { type: 'string', maxLength: 1000 } },
+      next_exact_action: { type: 'string', minLength: 1, maxLength: 2000 },
+      source_references: { type: 'array', maxItems: 100, items: { type: 'string', maxLength: 500 } },
+      evidence_references: { type: 'array', maxItems: 100, items: { type: 'string', maxLength: 500 } },
     },
-    outputSchema,
-    annotations: readAnnotations,
-  },
+    ['project_id', 'objective', 'next_exact_action'],
+  ),
 ] as const
 
 export const subscriptionToolNames = subscriptionMcpTools.map((tool) => tool.name)
 
 interface ToolResult {
   content: { type: 'text'; text: string }[]
-  structuredContent: Record<string, unknown>
+  structuredContent: any
   isError?: boolean
-}
-
-interface HandoffChangedFile {
-  path: string
-  status: string
 }
 
 interface HandoffPacketInput {
@@ -276,12 +207,8 @@ interface HandoffPacketInput {
   branch: string
   objective: string
   completed_work: string[]
-  changed_files: HandoffChangedFile[]
-  test_status: {
-    state: string
-    summary: string
-    evidence_references: string[]
-  }
+  changed_files: { path: string; status: string }[]
+  test_status: { state: string; summary: string; evidence_references: string[] }
   unresolved_issues: string[]
   decisions_required: string[]
   safety_constraints: string[]
@@ -294,7 +221,7 @@ function textResult(structuredContent: Record<string, unknown>): ToolResult {
   return {
     content: [{ type: 'text', text: JSON.stringify(structuredContent) }],
     structuredContent,
-    ...((structuredContent.ok === false) ? { isError: true } : {}),
+    ...(structuredContent.ok === false ? { isError: true } : {}),
   }
 }
 
@@ -305,19 +232,10 @@ function failure(code: string, message: string, actionRequired: string, project?
     status: 'failed',
     ...(project ? {
       project_id: project.id,
-      repository: {
-        owner: project.owner,
-        repo: project.repo,
-        full_name: `${project.owner}/${project.repo}`,
-      },
+      repository: repositoryRef(project),
       branch: project.defaultBranch,
     } : {}),
-    error: {
-      code,
-      message,
-      retryable: false,
-      action_required: actionRequired,
-    },
+    error: { code, message, retryable: false, action_required: actionRequired },
   })
 }
 
@@ -350,20 +268,17 @@ export function normalizeRepositoryPath(value: string): string {
   return path
 }
 
-function changedFiles(value: unknown): HandoffChangedFile[] {
+function changedFiles(value: unknown): { path: string; status: string }[] {
   if (!Array.isArray(value)) return []
-  const byPath = new Map<string, HandoffChangedFile>()
+  const byPath = new Map<string, { path: string; status: string }>()
   for (const item of value) {
     if (!item || typeof item !== 'object' || Array.isArray(item)) continue
     const record = item as Record<string, unknown>
     if (typeof record.path !== 'string') continue
     const path = normalizeRepositoryPath(record.path)
-    byPath.set(path, {
-      path,
-      status: optionalString(record.status, 40) ?? 'modified',
-    })
+    byPath.set(path, { path, status: optionalString(record.status, 40) ?? 'modified' })
   }
-  return [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path) || a.status.localeCompare(b.status))
+  return [...byPath.values()].sort((left, right) => left.path.localeCompare(right.path) || left.status.localeCompare(right.status))
 }
 
 function stableValue(value: unknown): unknown {
@@ -404,17 +319,12 @@ export async function buildHandoffPacket(input: HandoffPacketInput): Promise<Rec
     source_references: input.source_references,
     evidence_references: input.evidence_references,
   }
-  return {
-    ...packet,
-    packet_hash: await sha256(stableJson(packet)),
-  }
+  return { ...packet, packet_hash: await sha256(stableJson(packet)) }
 }
 
 function resultRecord(result: ToolResult): Record<string, unknown> {
   const value = result.structuredContent.result
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {}
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
 
 function isFailed(result: ToolResult): boolean {
@@ -422,11 +332,7 @@ function isFailed(result: ToolResult): boolean {
 }
 
 function repositoryRef(project: ProjectConfig) {
-  return {
-    owner: project.owner,
-    repo: project.repo,
-    full_name: `${project.owner}/${project.repo}`,
-  }
+  return { owner: project.owner, repo: project.repo, full_name: `${project.owner}/${project.repo}` }
 }
 
 function assertMissionProject(result: ToolResult, project: ProjectConfig, packetKey: 'mission' | 'packet'): ToolResult {
@@ -435,15 +341,14 @@ function assertMissionProject(result: ToolResult, project: ProjectConfig, packet
   const record = nested && typeof nested === 'object' && !Array.isArray(nested)
     ? nested as Record<string, unknown>
     : null
-  if (!record || record.project_id !== project.id) {
-    return failure(
+  return record?.project_id === project.id
+    ? result
+    : failure(
       'CROSS_PROJECT_ACCESS_DENIED',
       'Mission does not belong to the gateway project scope.',
       'Use a Mission created for the project bound to this gateway URL.',
       project,
     )
-  }
-  return result
 }
 
 async function githubJson<T>(token: string, path: string): Promise<T> {
@@ -459,7 +364,7 @@ async function githubJson<T>(token: string, path: string): Promise<T> {
   return response.json() as Promise<T>
 }
 
-function publicPullRequest(item: {
+interface PullRequestApi {
   number: number
   state: string
   draft?: boolean
@@ -473,7 +378,9 @@ function publicPullRequest(item: {
   created_at: string
   updated_at: string
   closed_at?: string | null
-}) {
+}
+
+function publicPullRequest(item: PullRequestApi) {
   return {
     number: item.number,
     title: item.title,
@@ -492,20 +399,12 @@ function publicPullRequest(item: {
   }
 }
 
-async function pullRequestStatus(
-  token: string,
-  project: ProjectConfig,
-  args: Record<string, unknown>,
-): Promise<ToolResult> {
-  const encodedRepo = `/repos/${encodeURIComponent(project.owner)}/${encodeURIComponent(project.repo)}`
+async function pullRequestStatus(token: string, project: ProjectConfig, args: Record<string, unknown>): Promise<ToolResult> {
+  const repositoryPath = `/repos/${encodeURIComponent(project.owner)}/${encodeURIComponent(project.repo)}`
   let items: ReturnType<typeof publicPullRequest>[]
 
   if (Number.isInteger(args.number) && Number(args.number) > 0) {
-    const item = await githubJson<Parameters<typeof publicPullRequest>[0]>(
-      token,
-      `${encodedRepo}/pulls/${Number(args.number)}`,
-    )
-    items = [publicPullRequest(item)]
+    items = [publicPullRequest(await githubJson<PullRequestApi>(token, `${repositoryPath}/pulls/${Number(args.number)}`))]
   } else {
     const branch = optionalString(args.branch, 160)
     if (!branch) throw new Error('number or branch is required')
@@ -518,11 +417,7 @@ async function pullRequestStatus(
       sort: 'updated',
       direction: 'desc',
     })
-    const response = await githubJson<Parameters<typeof publicPullRequest>[0][]>(
-      token,
-      `${encodedRepo}/pulls?${query.toString()}`,
-    )
-    items = response.map(publicPullRequest)
+    items = (await githubJson<PullRequestApi[]>(token, `${repositoryPath}/pulls?${query}`)).map(publicPullRequest)
   }
 
   return textResult({
@@ -544,9 +439,7 @@ function activityEvidence(context: Record<string, unknown>): string[] {
       for (const field of ['run_url', 'pr_url', 'task_id', 'operation_id', 'handoff_id']) {
         if (typeof value[field] === 'string' && value[field]) references.push(String(value[field]))
       }
-      if (Array.isArray(value.evidence)) {
-        references.push(...value.evidence.filter((item): item is string => typeof item === 'string'))
-      }
+      if (Array.isArray(value.evidence)) references.push(...value.evidence.filter((item): item is string => typeof item === 'string'))
     }
   }
   return [...new Set(references)].sort().slice(0, 100)
@@ -558,17 +451,12 @@ async function brainExportSummary(
   project: ProjectConfig,
   args: Record<string, unknown>,
 ): Promise<ToolResult> {
-  const contextResult = await executeProjectBrainMcpTool(
-    'project_context_get',
-    {
-      project_id: project.id,
-      include_activity: true,
-      max_chars_per_document: args.max_chars_per_document,
-      max_total_document_chars: args.max_total_document_chars,
-    },
-    token,
-    env,
-  ) as ToolResult
+  const contextResult = await executeProjectBrainMcpTool('project_context_get', {
+    project_id: project.id,
+    include_activity: true,
+    max_chars_per_document: args.max_chars_per_document,
+    max_total_document_chars: args.max_total_document_chars,
+  }, token, env) as ToolResult
   if (isFailed(contextResult)) return contextResult
 
   const branchResult = await executeReadOnlyMcpTool(
@@ -584,22 +472,17 @@ async function brainExportSummary(
 
   const context = resultRecord(contextResult)
   const branch = resultRecord(branchResult)
-  const missionsResult = resultRecord(missionResult)
-  const missions = Array.isArray(missionsResult.items)
-    ? (missionsResult.items as Record<string, unknown>[])
+  const missionData = resultRecord(missionResult)
+  const missions = Array.isArray(missionData.items)
+    ? (missionData.items as Record<string, unknown>[])
       .filter((item) => item.project_id === project.id)
       .sort((left, right) => String(right.updated_at ?? '').localeCompare(String(left.updated_at ?? '')))
     : []
-  const documents = Array.isArray(context.canonical_documents)
-    ? context.canonical_documents as Record<string, unknown>[]
-    : []
+  const documents = Array.isArray(context.canonical_documents) ? context.canonical_documents as Record<string, unknown>[] : []
   const pendingTasks = Array.isArray(context.project_tasks)
-    ? (context.project_tasks as Record<string, unknown>[])
-      .filter((item) => !['completed', 'cancelled'].includes(String(item.status)))
+    ? (context.project_tasks as Record<string, unknown>[]).filter((item) => !['completed', 'cancelled'].includes(String(item.status)))
     : []
-  const activeApproval = Array.isArray(context.approvals)
-    ? (context.approvals as Record<string, unknown>[])[0] ?? null
-    : null
+  const activeApproval = Array.isArray(context.approvals) ? (context.approvals as Record<string, unknown>[])[0] ?? null : null
 
   return textResult({
     ok: true,
@@ -674,40 +557,27 @@ export async function executeSubscriptionTool(
         return await executeProjectBrainMcpTool('project_memory_search', args, token, env) as ToolResult
       case 'brain_export_summary':
         return brainExportSummary(token, env, project, args)
-      case 'mission_get': {
-        const result = await executeMissionMcpTool(
-          'mission_get',
-          { mission_id: args.mission_id },
-          token,
-          env,
-        ) as ToolResult
-        return assertMissionProject(result, project, 'mission')
-      }
-      case 'mission_context_get': {
-        const result = await executeMissionMcpTool(
-          'mission_context_packet',
-          { mission_id: args.mission_id },
-          token,
-          env,
-        ) as ToolResult
-        return assertMissionProject(result, project, 'packet')
-      }
+      case 'mission_get':
+        return assertMissionProject(
+          await executeMissionMcpTool('mission_get', { mission_id: args.mission_id }, token, env) as ToolResult,
+          project,
+          'mission',
+        )
+      case 'mission_context_get':
+        return assertMissionProject(
+          await executeMissionMcpTool('mission_context_packet', { mission_id: args.mission_id }, token, env) as ToolResult,
+          project,
+          'packet',
+        )
       case 'repository_status':
         return await executeSafeWriteMcpTool('repository_status', args, token, env) as ToolResult
       case 'repository_read_file':
-        return await executeReadOnlyMcpTool(
-          'repository_read_file',
-          { ...args, path: normalizeRepositoryPath(stringValue(args.path, 'path', 240)) },
-          token,
-          env,
-        ) as ToolResult
+        return await executeReadOnlyMcpTool('repository_read_file', {
+          ...args,
+          path: normalizeRepositoryPath(stringValue(args.path, 'path', 240)),
+        }, token, env) as ToolResult
       case 'repository_search':
-        return await executeReadOnlyMcpTool(
-          'repository_search_code',
-          { ...args, query: args.query },
-          token,
-          env,
-        ) as ToolResult
+        return await executeReadOnlyMcpTool('repository_search_code', args, token, env) as ToolResult
       case 'pull_request_status':
         return pullRequestStatus(token, project, args)
       case 'deployment_status':
@@ -725,10 +595,13 @@ export async function executeSubscriptionTool(
         const baseSha = typeof branch.sha === 'string' ? branch.sha : ''
         if (!baseSha) throw new Error('Repository branch SHA is unavailable')
 
-        const missionId = optionalString(args.mission_id, 64) ?? null
-        if (missionId) {
-          const mission = await executeMissionMcpTool('mission_get', { mission_id: missionId }, token, env) as ToolResult
-          const scopedMission = assertMissionProject(mission, project, 'mission')
+        const mission = optionalString(args.mission_id, 64) ?? null
+        if (mission) {
+          const scopedMission = assertMissionProject(
+            await executeMissionMcpTool('mission_get', { mission_id: mission }, token, env) as ToolResult,
+            project,
+            'mission',
+          )
           if (isFailed(scopedMission)) return scopedMission
         }
 
@@ -737,7 +610,7 @@ export async function executeSubscriptionTool(
           : {}
         const packet = await buildHandoffPacket({
           project_id: project.id,
-          mission_id: missionId,
+          mission_id: mission,
           repository: `${project.owner}/${project.repo}`,
           base_sha: baseSha,
           branch: branchName,
