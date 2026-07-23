@@ -99,7 +99,7 @@ async function storeRequest(env: Env, path: string, init: RequestInit = {}): Pro
       ...(init.headers ?? {}),
     },
   })
-  const payload = await response.json().catch(() => null)
+  const payload = await response.json().catch(() => null) as Record<string, any> | null
   if (!response.ok) {
     const message = payload && typeof payload.error === 'string' ? payload.error : `Subscription credential store error ${response.status}`
     throw new Error(message)
