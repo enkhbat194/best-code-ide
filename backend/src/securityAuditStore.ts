@@ -1,3 +1,13 @@
+import {
+  SUBSCRIPTION_CREDENTIAL_SCHEMA_VERSION,
+  SUBSCRIPTION_CREDENTIAL_VERSION,
+  SUBSCRIPTION_PROFILE,
+  SUBSCRIPTION_TOOL_SET_VERSION,
+  type PublicSubscriptionCredential,
+  type SubscriptionCredentialRecord,
+  type SubscriptionCredentialStatus,
+} from './subscriptionCredentialTypes'
+
 export interface SecurityAuditEvent {
   audit_id: string
   event: string
@@ -8,6 +18,9 @@ export interface SecurityAuditEvent {
   client?: string
   details: Record<string, unknown>
 }
+
+const CREDENTIAL_PREFIX = 'subscription-credential:'
+const DUMMY_SECRET_HASH = '0'.repeat(64)
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -20,9 +33,115 @@ function eventKey(event: SecurityAuditEvent): string {
   return `security-audit:${event.occurred_at}:${event.audit_id}`
 }
 
+function credentialKey(credentialId: string): string {
+  return `${CREDENTIAL_PREFIX}${credentialId}`
+}
+
 function cleanString(value: unknown, max: number): string | undefined {
   if (typeof value !== 'string' || !value.trim()) return undefined
   return value.trim().slice(0, max)
+}
+
+function cleanDate(value: unknown): string | undefined {
+  const text = cleanString(value, 40)
+  return text && Number.isFinite(Date.parse(text)) ? new Date(text).toISOString() : undefined
+}
+
+function cleanStringList(value: unknown, maxItems = 100, maxChars = 160): string[] | undefined {
+  if (!Array.isArray(value) || value.length > maxItems) return undefined
+  const items = value.map((item) => cleanString(item, maxChars))
+  if (items.some((item) => !item)) return undefined
+  return [...new Set(items as string[])]
+}
+
+function safeNow(value: unknown): string {
+  const supplied = cleanDate(value)
+  return supplied ?? new Date().toISOString()
+}
+
+function constantTimeHexEqual(left: string, right: string): boolean {
+  const a = /^[a-f0-9]{64}$/i.test(left) ? left.toLowerCase() : DUMMY_SECRET_HASH
+  const b = /^[a-f0-9]{64}$/i.test(right) ? right.toLowerCase() : DUMMY_SECRET_HASH
+  let difference = 0
+  for (let index = 0; index < 64; index += 1) difference |= a.charCodeAt(index) ^ b.charCodeAt(index)
+  return difference === 0
+}
+
+function credentialStatus(record: SubscriptionCredentialRecord, now: string): SubscriptionCredentialStatus {
+  if (record.disabled_at) return 'disabled'
+  if (record.revoked_at) return 'revoked'
+  return Date.parse(now) >= Date.parse(record.expires_at) ? 'expired' : 'active'
+}
+
+function publicCredential(record: SubscriptionCredentialRecord, now = new Date().toISOString()): PublicSubscriptionCredential {
+  const { secret_hash: _secretHash, ...safe } = record
+  return { ...safe, status: credentialStatus(record, now) }
+}
+
+function normalizeCredentialRecord(value: unknown): SubscriptionCredentialRecord | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const input = value as Record<string, unknown>
+  const credentialId = cleanString(input.credential_id, 64)
+  const projectId = cleanString(input.project_id, 64)
+  const subjectAgentId = cleanString(input.subject_agent_id, 160)
+  const agentProvider = cleanString(input.agent_provider, 80)
+  const allowedTools = cleanStringList(input.allowed_tools)
+  const issuedAt = cleanDate(input.issued_at)
+  const expiresAt = cleanDate(input.expires_at)
+  const revokedAt = input.revoked_at === undefined ? undefined : cleanDate(input.revoked_at)
+  const disabledAt = input.disabled_at === undefined ? undefined : cleanDate(input.disabled_at)
+  const createdBy = cleanString(input.created_by_owner_identity, 160)
+  const lastUsedAt = input.last_used_at === undefined ? undefined : cleanDate(input.last_used_at)
+  const note = input.note === undefined ? undefined : cleanString(input.note, 500)
+  const secretHash = cleanString(input.secret_hash, 64)
+  const requestCount = Number(input.request_count)
+  const auditMetadata = input.audit_metadata && typeof input.audit_metadata === 'object' && !Array.isArray(input.audit_metadata)
+    ? input.audit_metadata as Record<string, unknown>
+    : null
+
+  if (
+    input.schema_version !== SUBSCRIPTION_CREDENTIAL_SCHEMA_VERSION ||
+    !credentialId || !/^[a-f0-9-]{36}$/i.test(credentialId) ||
+    !projectId || !/^[A-Za-z0-9._-]{1,64}$/.test(projectId) ||
+    !subjectAgentId || !/^[A-Za-z0-9._:@/-]{1,160}$/.test(subjectAgentId) ||
+    !agentProvider || !/^[A-Za-z0-9._:@/-]{1,80}$/.test(agentProvider) ||
+    input.allowed_mcp_profile !== SUBSCRIPTION_PROFILE ||
+    input.tool_set_version !== SUBSCRIPTION_TOOL_SET_VERSION ||
+    !allowedTools || allowedTools.length === 0 ||
+    !issuedAt || !expiresAt || Date.parse(expiresAt) <= Date.parse(issuedAt) ||
+    (input.revoked_at !== undefined && !revokedAt) ||
+    (input.disabled_at !== undefined && !disabledAt) ||
+    !createdBy ||
+    (input.last_used_at !== undefined && !lastUsedAt) ||
+    !Number.isSafeInteger(requestCount) || requestCount < 0 ||
+    input.credential_version !== SUBSCRIPTION_CREDENTIAL_VERSION ||
+    (input.note !== undefined && !note) ||
+    !auditMetadata ||
+    typeof auditMetadata.rate_limit_policy !== 'string' ||
+    !secretHash || !/^[a-f0-9]{64}$/i.test(secretHash)
+  ) return null
+
+  return {
+    schema_version: SUBSCRIPTION_CREDENTIAL_SCHEMA_VERSION,
+    credential_id: credentialId,
+    project_id: projectId,
+    subject_agent_id: subjectAgentId,
+    agent_provider: agentProvider,
+    allowed_mcp_profile: SUBSCRIPTION_PROFILE,
+    allowed_tools: allowedTools,
+    tool_set_version: SUBSCRIPTION_TOOL_SET_VERSION,
+    issued_at: issuedAt,
+    expires_at: expiresAt,
+    ...(revokedAt ? { revoked_at: revokedAt } : {}),
+    ...(disabledAt ? { disabled_at: disabledAt } : {}),
+    created_by_owner_identity: createdBy,
+    ...(lastUsedAt ? { last_used_at: lastUsedAt } : {}),
+    request_count: requestCount,
+    credential_version: SUBSCRIPTION_CREDENTIAL_VERSION,
+    ...(note ? { note } : {}),
+    audit_metadata: auditMetadata as SubscriptionCredentialRecord['audit_metadata'],
+    secret_hash: secretHash.toLowerCase(),
+  }
 }
 
 export function normalizeSecurityAuditEvent(value: unknown): SecurityAuditEvent | null {
@@ -84,6 +203,90 @@ export class SecurityAuditStore {
         .filter((item) => (!eventFilter || item.event === eventFilter) && (sinceMs === undefined || Date.parse(item.occurred_at) >= sinceMs))
         .sort((a, b) => Date.parse(b.occurred_at) - Date.parse(a.occurred_at))
       return json({ items: items.slice(0, limit), count: Math.min(items.length, limit), total: items.length })
+    }
+
+    if (request.method === 'POST' && url.pathname === '/subscription-credentials') {
+      const record = normalizeCredentialRecord(await request.json().catch(() => null))
+      if (!record) return json({ error: 'Invalid subscription credential record' }, 400)
+      const key = credentialKey(record.credential_id)
+      if (await this.state.storage.get(key)) return json({ error: 'Credential already exists' }, 409)
+      await this.state.storage.put(key, record)
+      return json({ credential: publicCredential(record, record.issued_at) }, 201)
+    }
+
+    if (request.method === 'GET' && url.pathname === '/subscription-credentials') {
+      const projectId = cleanString(url.searchParams.get('project_id'), 64)
+      const values = await this.state.storage.list<SubscriptionCredentialRecord>({ prefix: CREDENTIAL_PREFIX })
+      const items = [...values.values()]
+        .filter((item) => !projectId || item.project_id === projectId)
+        .sort((left, right) => Date.parse(right.issued_at) - Date.parse(left.issued_at))
+        .map((item) => publicCredential(item))
+      return json({ items, count: items.length })
+    }
+
+    if (request.method === 'POST' && url.pathname === '/subscription-credentials/authenticate') {
+      const input = await request.json().catch(() => null) as Record<string, unknown> | null
+      const credentialId = cleanString(input?.credential_id, 64) ?? ''
+      const presentedHash = cleanString(input?.presented_hash, 64) ?? DUMMY_SECRET_HASH
+      const endpoint = cleanString(input?.endpoint, 200) ?? ''
+      const projectId = cleanString(input?.project_id, 64) ?? ''
+      const profile = cleanString(input?.profile, 80) ?? ''
+      const now = safeNow(input?.now)
+      const record = credentialId
+        ? await this.state.storage.get<SubscriptionCredentialRecord>(credentialKey(credentialId))
+        : undefined
+      const hashMatches = constantTimeHexEqual(record?.secret_hash ?? DUMMY_SECRET_HASH, presentedHash)
+      const status = record ? credentialStatus(record, now) : 'expired'
+      const valid = Boolean(
+        record &&
+        hashMatches &&
+        status === 'active' &&
+        endpoint === '/mcp/subscription' &&
+        projectId === record.project_id &&
+        profile === record.allowed_mcp_profile,
+      )
+      if (!valid || !record) return json({ ok: false, code: 'INVALID_SCOPED_CREDENTIAL' }, 401)
+
+      const updated: SubscriptionCredentialRecord = {
+        ...record,
+        last_used_at: now,
+        request_count: record.request_count + 1,
+      }
+      await this.state.storage.put(credentialKey(record.credential_id), updated)
+      return json({
+        ok: true,
+        principal: {
+          credential_id: updated.credential_id,
+          project_id: updated.project_id,
+          agent_id: updated.subject_agent_id,
+          provider: updated.agent_provider,
+          profile: updated.allowed_mcp_profile,
+          allowed_tools: updated.allowed_tools,
+          tool_set_version: updated.tool_set_version,
+          credential_version: updated.credential_version,
+          issued_at: updated.issued_at,
+          expires_at: updated.expires_at,
+        },
+      })
+    }
+
+    const credentialMatch = url.pathname.match(/^\/subscription-credentials\/([a-f0-9-]{36})(?:\/(revoke))?$/i)
+    if (credentialMatch) {
+      const credentialId = credentialMatch[1]
+      const operation = credentialMatch[2]
+      const key = credentialKey(credentialId)
+      const record = await this.state.storage.get<SubscriptionCredentialRecord>(key)
+      if (!record) return json({ error: 'Credential not found' }, 404)
+
+      if (request.method === 'GET' && !operation) return json({ credential: publicCredential(record) })
+
+      if (request.method === 'POST' && operation === 'revoke') {
+        const input = await request.json().catch(() => null) as Record<string, unknown> | null
+        const revokedAt = record.revoked_at ?? safeNow(input?.revoked_at)
+        const updated = { ...record, revoked_at: revokedAt }
+        await this.state.storage.put(key, updated)
+        return json({ credential: publicCredential(updated, revokedAt) })
+      }
     }
 
     return json({ error: 'Not found' }, 404)
