@@ -22,6 +22,7 @@ import {
   DEFAULT_RATE_LIMIT,
   DEFAULT_RATE_WINDOW_MS,
   DEFAULT_UNAUTHORIZED_RATE_LIMIT,
+  DEFAULT_WORKSPACE_REQUEST_BYTES,
   clientRateKey,
   enforceRateLimit,
   enforceRequestLimits,
