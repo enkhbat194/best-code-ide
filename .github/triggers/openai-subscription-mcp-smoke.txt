@@ -1,6 +1,6 @@
 OpenAI subscription MCP production smoke trigger.
 
 Requested: 2026-07-24
-Trigger nonce: 2026-07-24-openai-mcp-production-smoke-2
-Reason: verify the merged Chat 9 subscription MCP integration in production and publish the run ID as a commit status.
+Trigger nonce: 2026-07-24-openai-mcp-production-smoke-3
+Reason: verify the merged Chat 9 subscription MCP integration after Cloudflare deploy-lag retry handling was added.
 Lifecycle: create one short-lived scoped credential, verify read-only access, then revoke it in the same workflow run.
