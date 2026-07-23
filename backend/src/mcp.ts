@@ -1,9 +1,12 @@
+import { persistSecurityAudit } from './securityAudit'
+import type { RequestPrincipal } from './subscriptionCredentialTypes'
 import {
   executeGatewayTool,
   gatewayContextFromRequest,
   gatewayTools,
   isKnownGatewayTool,
   type GatewayProfile,
+  type GatewayToolResult,
 } from './toolGateway'
 import { resolveSecret } from './utils'
 import type { Env } from './types'
@@ -38,6 +41,26 @@ function rpcError(id: string | number | null | undefined, code: number, message:
 
 function profileForRequest(req: Request): GatewayProfile {
   return new URL(req.url).pathname === '/mcp/subscription' ? 'subscription-readonly' : 'legacy'
+}
+
+async function requestForPrincipal(req: Request, principal: RequestPrincipal): Promise<Request> {
+  if (principal.kind === 'owner') return req
+  const url = new URL(req.url)
+  url.searchParams.set('project_id', principal.project_id)
+  url.searchParams.delete('agent_id')
+  url.searchParams.delete('agent_provider')
+  const headers = new Headers(req.headers)
+  headers.set('X-BestCode-Agent-Id', principal.agent_id)
+  headers.set('X-BestCode-Agent-Provider', principal.provider)
+  headers.delete('X-BestCode-Agent-Session')
+  const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : await req.clone().arrayBuffer()
+  return new Request(url.toString(), {
+    method: req.method,
+    headers,
+    body,
+    redirect: req.redirect,
+    signal: req.signal,
+  })
 }
 
 function allowedOrigins(req: Request, env: Env): Set<string> {
@@ -115,29 +138,74 @@ function missingGithubTokenResult(req: Request, profile: GatewayProfile) {
     },
   }
   return {
-    content: [{ type: 'text', text: JSON.stringify(structuredContent) }],
+    content: [{ type: 'text' as const, text: JSON.stringify(structuredContent) }],
     structuredContent,
     isError: true,
   }
 }
 
+function withCredentialAudit(result: GatewayToolResult, principal: RequestPrincipal): GatewayToolResult {
+  if (principal.kind === 'owner') return result
+  const prior = result.structuredContent && typeof result.structuredContent === 'object'
+    ? result.structuredContent as Record<string, any>
+    : {}
+  const audit = prior.audit && typeof prior.audit === 'object' ? prior.audit as Record<string, unknown> : {}
+  const structuredContent = {
+    ...prior,
+    actor: { id: principal.agent_id, provider: principal.provider },
+    project_scope: principal.project_id,
+    audit: {
+      ...audit,
+      credential_id: principal.credential_id,
+      project_id: principal.project_id,
+      agent_id: principal.agent_id,
+      provider: principal.provider,
+      mcp_profile: principal.profile,
+      credential_version: principal.credential_version,
+      tool_set_version: principal.tool_set_version,
+      ...(prior.error?.code ? { denial_code: prior.error.code } : {}),
+    },
+  }
+  return {
+    ...result,
+    content: [{ type: 'text', text: JSON.stringify(structuredContent) }],
+    structuredContent,
+  }
+}
+
 /** Stateless JSON-response Streamable HTTP MCP endpoint. */
-export async function handleMcp(req: Request, env: Env): Promise<Response> {
-  const profile = profileForRequest(req)
-  const originError = validateOrigin(req, env)
+export async function handleMcp(
+  req: Request,
+  env: Env,
+  principal: RequestPrincipal = { kind: 'owner', identity: 'owner' },
+): Promise<Response> {
+  const effectiveRequest = await requestForPrincipal(req, principal)
+  const profile = profileForRequest(effectiveRequest)
+  const url = new URL(effectiveRequest.url)
+
+  if (principal.kind === 'subscription') {
+    if (url.pathname !== '/mcp/subscription' || profile !== principal.profile) {
+      return rpcError(undefined, -32001, 'Forbidden', 403, { code: 'ENDPOINT_NOT_ALLOWED' })
+    }
+    if (url.searchParams.get('project_id') !== principal.project_id) {
+      return rpcError(undefined, -32001, 'Forbidden', 403, { code: 'PROJECT_SCOPE_MISMATCH' })
+    }
+  }
+
+  const originError = validateOrigin(effectiveRequest, env)
   if (originError) return originError
 
-  if (req.method === 'GET' || req.method === 'DELETE') {
+  if (effectiveRequest.method === 'GET' || effectiveRequest.method === 'DELETE') {
     return new Response(null, { status: 405, headers: { Allow: 'POST', 'Cache-Control': 'no-store' } })
   }
-  if (req.method !== 'POST') return new Response(null, { status: 405, headers: { Allow: 'POST' } })
+  if (effectiveRequest.method !== 'POST') return new Response(null, { status: 405, headers: { Allow: 'POST' } })
 
-  const acceptError = validateAccept(req)
+  const acceptError = validateAccept(effectiveRequest)
   if (acceptError) return acceptError
 
   let message: JsonRpcMessage
   try {
-    const parsed = await req.json()
+    const parsed = await effectiveRequest.json()
     if (Array.isArray(parsed) || !parsed || typeof parsed !== 'object') {
       return rpcError(undefined, -32600, 'A single JSON-RPC object is required')
     }
@@ -150,7 +218,7 @@ export async function handleMcp(req: Request, env: Env): Promise<Response> {
   if (isJsonRpcResponse(message)) return new Response(null, { status: 202, headers: { 'Cache-Control': 'no-store' } })
   if (typeof message.method !== 'string') return rpcError(message.id, -32600, 'Missing JSON-RPC method')
 
-  const protocolError = validateProtocolVersion(req, message.method)
+  const protocolError = validateProtocolVersion(effectiveRequest, message.method)
   if (protocolError) return protocolError
   if (isNotification(message)) return new Response(null, { status: 202, headers: { 'Cache-Control': 'no-store' } })
 
@@ -164,7 +232,7 @@ export async function handleMcp(req: Request, env: Env): Promise<Response> {
         serverInfo: {
           name: subscription ? 'bestcode-subscription-agent-gateway' : 'bestcode-repository-controller',
           title: subscription ? 'BestCode Subscription Agent Gateway' : 'BestCode Repository Controller',
-          version: '0.12.0',
+          version: '0.13.0',
           description: subscription
             ? 'Authenticated, project-scoped, provider-neutral read-only gateway for subscription coding agents.'
             : 'Project-scoped controller with Missions, Project Brain, approval-gated Git delivery, CI, deployment, and rollback requests.',
@@ -176,10 +244,10 @@ export async function handleMcp(req: Request, env: Env): Promise<Response> {
     }
 
     case 'ping':
-      return rpcResponse(message.id, {}, methodHeaders(req, 'ping'))
+      return rpcResponse(message.id, {}, methodHeaders(effectiveRequest, 'ping'))
 
     case 'tools/list':
-      return rpcResponse(message.id, { tools: gatewayTools(profile) }, methodHeaders(req, 'tools/list'))
+      return rpcResponse(message.id, { tools: gatewayTools(profile) }, methodHeaders(effectiveRequest, 'tools/list'))
 
     case 'tools/call': {
       const name = typeof message.params?.name === 'string' ? message.params.name : ''
@@ -191,33 +259,57 @@ export async function handleMcp(req: Request, env: Env): Promise<Response> {
       }
 
       const githubToken = resolveSecret(env, 'GITHUB_TOKEN')
+      const context = gatewayContextFromRequest(effectiveRequest, profile, 'mcp')
+      let result: GatewayToolResult
       if (!githubToken) {
-        return rpcResponse(message.id, missingGithubTokenResult(req, profile), methodHeaders(req, 'tools/call', name))
+        result = missingGithubTokenResult(effectiveRequest, profile)
+      } else {
+        result = await executeGatewayTool(
+          profile,
+          name,
+          (args as Record<string, unknown> | undefined) ?? {},
+          githubToken,
+          env,
+          context,
+        )
       }
-
-      const context = gatewayContextFromRequest(req, profile, 'mcp')
-      const result = await executeGatewayTool(
-        profile,
-        name,
-        (args as Record<string, unknown> | undefined) ?? {},
-        githubToken,
-        env,
-        context,
-      )
+      result = withCredentialAudit(result, principal)
       const audit = result.structuredContent.audit
-      console.log(JSON.stringify({
+      const auditRecord = {
         event: 'mcp_tool_call',
         request_id: context.request_id,
-        actor: context.actor,
-        project_scope: context.project_scope ?? null,
+        actor: result.structuredContent.actor ?? context.actor,
+        project_scope: result.structuredContent.project_scope ?? context.project_scope ?? null,
         tool: name,
         operation_id: result.structuredContent.operation_id,
         ok: result.structuredContent.ok,
         status: result.structuredContent.status,
         safety_class: result.structuredContent.safety_class,
         audit,
-      }))
-      return rpcResponse(message.id, result, methodHeaders(req, 'tools/call', name))
+      }
+      console.log(JSON.stringify(auditRecord))
+      await persistSecurityAudit(env, 'mcp_tool_call', {
+        path: url.pathname,
+        method: effectiveRequest.method,
+        identity: principal.kind === 'owner' ? 'owner' : 'unknown',
+        request_id: context.request_id,
+        tool: name,
+        outcome: audit?.outcome ?? (result.isError ? 'failed' : 'completed'),
+        denial_code: result.structuredContent.error?.code,
+        auth_type: principal.kind,
+        ...(principal.kind === 'subscription' ? {
+          credential_id: principal.credential_id,
+          project_id: principal.project_id,
+          agent_id: principal.agent_id,
+          provider: principal.provider,
+          mcp_profile: principal.profile,
+          credential_version: principal.credential_version,
+          tool_set_version: principal.tool_set_version,
+        } : {}),
+      }).catch((error) => {
+        console.error('MCP audit persistence failed', error instanceof Error ? error.message : String(error))
+      })
+      return rpcResponse(message.id, result, methodHeaders(effectiveRequest, 'tools/call', name))
     }
 
     default:

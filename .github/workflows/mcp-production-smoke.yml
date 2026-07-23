@@ -6,9 +6,14 @@ on:
     branches: [main]
     paths:
       - 'backend/src/actions.ts'
+      - 'backend/src/authentication.ts'
       - 'backend/src/index.ts'
       - 'backend/src/mcp.ts'
       - 'backend/src/openapi.ts'
+      - 'backend/src/securityAuditStore.ts'
+      - 'backend/src/subscriptionCredentialApi.ts'
+      - 'backend/src/subscriptionCredentials.ts'
+      - 'backend/src/subscriptionCredentialTypes.ts'
       - 'backend/src/subscriptionTools.ts'
       - 'backend/src/toolGateway.ts'
       - 'backend/src/mcpReadTools.ts'

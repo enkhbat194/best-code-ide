@@ -2,6 +2,7 @@ import { handleActions } from './actions'
 import { handleApprovals } from './approvals'
 import { handleAssetBinaryApi } from './assetBinaryApi'
 import { handleAssetProcessingApi } from './assetProcessingApi'
+import { authenticateRequest, isAuthorized } from './authentication'
 import { handleBrainApi } from './brainApi'
 import { handleChat } from './chat'
 import { handleFilesCommit } from './files'
@@ -28,10 +29,11 @@ import {
   isOriginAllowed,
   parseAllowedOrigins,
   parsePositiveInteger,
-  rateLimitForIdentity,
   requestLimitFor,
 } from './security'
 import { handleSecurityAudit, persistSecurityAudit } from './securityAudit'
+import { handleSubscriptionCredentialApi } from './subscriptionCredentialApi'
+import type { RequestPrincipal } from './subscriptionCredentialTypes'
 import { handleTasks } from './tasks'
 import { handleWorkspaceExport } from './workspace'
 import { CORS_HEADERS, jsonError, jsonResponse, resolveSecret, withCors } from './utils'
@@ -40,24 +42,7 @@ import type { Env } from './types'
 export { ApprovalStore } from './approvalStore'
 export { BrainStore } from './brainStore'
 export { SecurityAuditStore } from './securityAuditStore'
-
-async function digest(value: string): Promise<Uint8Array> {
-  return new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)))
-}
-
-export async function isAuthorized(req: Request, env: Pick<Env, 'AUTH_TOKEN'>): Promise<boolean> {
-  const header = req.headers.get('Authorization') ?? ''
-  const token = header.startsWith('Bearer ')
-    ? header.slice(7)
-    : (new URL(req.url).searchParams.get('key') ?? '')
-  const expected = resolveSecret(env, 'AUTH_TOKEN')
-  if (!token || !expected) return false
-
-  const [actualHash, expectedHash] = await Promise.all([digest(token), digest(expected)])
-  let difference = 0
-  for (let index = 0; index < expectedHash.length; index += 1) difference |= actualHash[index] ^ expectedHash[index]
-  return difference === 0
-}
+export { isAuthorized }
 
 function disabledExplicitly(value: string | undefined): boolean {
   return value?.trim().toLowerCase() === 'false'
@@ -68,6 +53,11 @@ function unauthorized(): Response {
   response.headers.set('WWW-Authenticate', 'Bearer realm="BestCode MCP"')
   response.headers.set('Cache-Control', 'no-store')
   return response
+}
+
+function rateLimitIdentity(principal: RequestPrincipal | null): string {
+  if (!principal) return 'unauthorized'
+  return principal.kind === 'owner' ? 'owner' : `subscription:${principal.credential_id}`
 }
 
 export default {
@@ -109,57 +99,93 @@ export default {
 
     if (url.pathname === '/openapi.json' && req.method === 'GET') return jsonResponse(openapiSpec(url.origin))
 
-    const authorized = await isAuthorized(req, env)
+    const authentication = await authenticateRequest(req, env)
+    const principal = authentication.principal
     const rateProfile = {
       owner: parsePositiveInteger(resolveSecret(env, 'OWNER_RATE_LIMIT_REQUESTS'), DEFAULT_OWNER_RATE_LIMIT),
       unauthorized: parsePositiveInteger(resolveSecret(env, 'UNAUTHORIZED_RATE_LIMIT_REQUESTS'), DEFAULT_UNAUTHORIZED_RATE_LIMIT),
       fallback: parsePositiveInteger(resolveSecret(env, 'RATE_LIMIT_REQUESTS'), DEFAULT_RATE_LIMIT),
       windowMs: parsePositiveInteger(resolveSecret(env, 'RATE_LIMIT_WINDOW_MS'), DEFAULT_RATE_WINDOW_MS),
     }
-    const identity = authorized ? 'owner' : 'unauthorized'
-    const rateResponse = enforceRateLimit(`${identity}:${clientRateKey(req)}`, rateLimitForIdentity(authorized, rateProfile), rateProfile.windowMs)
+    const identity = rateLimitIdentity(principal)
+    const rateLimit = principal?.kind === 'owner'
+      ? rateProfile.owner
+      : principal?.kind === 'subscription'
+        ? rateProfile.fallback
+        : rateProfile.unauthorized
+    const rateResponse = enforceRateLimit(`${identity}:${clientRateKey(req)}`, rateLimit, rateProfile.windowMs)
     if (rateResponse) {
-      audit('rate_limit_rejected', { path: url.pathname, method: req.method, identity, client: clientRateKey(req) })
+      audit('rate_limit_rejected', {
+        path: url.pathname,
+        method: req.method,
+        identity: principal?.kind === 'owner' ? 'owner' : principal ? 'unknown' : 'unauthorized',
+        auth_type: principal?.kind ?? authentication.attempted_kind,
+        credential_id: principal?.kind === 'subscription' ? principal.credential_id : undefined,
+        client: clientRateKey(req),
+      })
       return rateResponse
     }
 
-    if (!authorized) {
-      audit('authorization_rejected', { path: url.pathname, method: req.method, identity, client: clientRateKey(req) })
+    if (!principal) {
+      audit('authorization_rejected', {
+        path: url.pathname,
+        method: req.method,
+        identity: 'unauthorized',
+        attempted_kind: authentication.attempted_kind,
+        denial_code: authentication.denial_code,
+        client: clientRateKey(req),
+      })
       return unauthorized()
-    }
-
-    const securityAuditResponse = await handleSecurityAudit(req, env, url)
-    if (securityAuditResponse) return securityAuditResponse
-
-    const assetProcessingResponse = await handleAssetProcessingApi(req, env, url)
-    if (assetProcessingResponse) {
-      audit('asset_processing_api', { path: url.pathname, method: req.method, status: assetProcessingResponse.status, identity })
-      return withCors(assetProcessingResponse)
-    }
-
-    const assetBinaryResponse = await handleAssetBinaryApi(req, env, url)
-    if (assetBinaryResponse) {
-      audit('asset_binary_api', { path: url.pathname, method: req.method, status: assetBinaryResponse.status, identity })
-      return withCors(assetBinaryResponse)
-    }
-
-    const brainResponse = await handleBrainApi(req, env, url)
-    if (brainResponse) {
-      audit('brain_api', { path: url.pathname, method: req.method, status: brainResponse.status, identity })
-      return withCors(brainResponse)
-    }
-
-    const missionResponse = await handleMissionApi(req, env, url)
-    if (missionResponse) {
-      audit('mission_api', { path: url.pathname, method: req.method, status: missionResponse.status, identity })
-      return missionResponse
     }
 
     if (
       (url.pathname === '/mcp' || url.pathname === '/mcp/subscription') &&
       (req.method === 'POST' || req.method === 'GET' || req.method === 'DELETE')
     ) {
-      return handleMcp(req, env)
+      return handleMcp(req, env, principal)
+    }
+
+    if (principal.kind !== 'owner') {
+      audit('scoped_endpoint_denied', {
+        path: url.pathname,
+        method: req.method,
+        identity: 'unknown',
+        auth_type: 'subscription',
+        credential_id: principal.credential_id,
+        project_id: principal.project_id,
+        denial_code: 'ENDPOINT_NOT_ALLOWED',
+      })
+      return unauthorized()
+    }
+
+    const credentialResponse = await handleSubscriptionCredentialApi(req, env, url, principal)
+    if (credentialResponse) return credentialResponse
+
+    const securityAuditResponse = await handleSecurityAudit(req, env, url)
+    if (securityAuditResponse) return securityAuditResponse
+
+    const assetProcessingResponse = await handleAssetProcessingApi(req, env, url)
+    if (assetProcessingResponse) {
+      audit('asset_processing_api', { path: url.pathname, method: req.method, status: assetProcessingResponse.status, identity: 'owner' })
+      return withCors(assetProcessingResponse)
+    }
+
+    const assetBinaryResponse = await handleAssetBinaryApi(req, env, url)
+    if (assetBinaryResponse) {
+      audit('asset_binary_api', { path: url.pathname, method: req.method, status: assetBinaryResponse.status, identity: 'owner' })
+      return withCors(assetBinaryResponse)
+    }
+
+    const brainResponse = await handleBrainApi(req, env, url)
+    if (brainResponse) {
+      audit('brain_api', { path: url.pathname, method: req.method, status: brainResponse.status, identity: 'owner' })
+      return withCors(brainResponse)
+    }
+
+    const missionResponse = await handleMissionApi(req, env, url)
+    if (missionResponse) {
+      audit('mission_api', { path: url.pathname, method: req.method, status: missionResponse.status, identity: 'owner' })
+      return missionResponse
     }
 
     const actionResponse = await handleActions(req, env, url)
