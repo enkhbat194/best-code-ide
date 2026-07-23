@@ -20,7 +20,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: node --test scripts/cloudflare-release-integrity.test.mjs scripts/cloudflare-production-build-controller.test.mjs scripts/r2-production-smoke.test.mjs scripts/mcp-production-smoke.test.mjs scripts/scoped-subscription-auth-smoke.test.mjs
+      - run: node --test scripts/cloudflare-release-integrity.test.mjs scripts/cloudflare-release-integrity-retry.test.mjs scripts/cloudflare-production-build-controller.test.mjs scripts/r2-production-smoke.test.mjs scripts/mcp-production-smoke.test.mjs scripts/scoped-subscription-auth-smoke.test.mjs
 
   backend-tests:
     name: Backend typecheck and unit tests
