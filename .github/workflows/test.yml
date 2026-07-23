@@ -66,6 +66,8 @@ jobs:
         shell: bash
         run: |
           node --input-type=module <<'NODE'
+          import { mkdir, writeFile } from 'node:fs/promises'
+
           const api = 'https://api.github.com'
           const repository = process.env.REPOSITORY
           const expectedSha = process.env.EXPECTED_SHA
@@ -121,8 +123,18 @@ jobs:
               digest: evidenceArtifact.digest ?? null,
             } : null,
           }
+          await mkdir('artifacts', { recursive: true })
+          await writeFile('artifacts/mcp-production-observer.json', `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 })
           console.log(`MCP_PRODUCTION_CLOSEOUT_EVIDENCE=${JSON.stringify(evidence)}`)
           if (run.status !== 'completed' || run.conclusion !== 'success') throw new Error(`Production smoke conclusion: ${run.conclusion ?? run.status}`)
           if (!evidenceArtifact || evidenceArtifact.expired) throw new Error('Immutable production smoke artifact is missing or expired')
           if ((jobs.jobs ?? []).some((job) => job.conclusion !== 'success')) throw new Error('One or more production smoke jobs did not succeed')
           NODE
+      - name: Upload temporary observer evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-production-observer-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/mcp-production-observer.json
+          if-no-files-found: error
+          retention-days: 1
