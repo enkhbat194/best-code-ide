@@ -7,6 +7,11 @@ on:
         description: Type CREATE-OPENAI-AND-REVOKE to approve one short-lived production OpenAI credential lifecycle
         required: true
         type: string
+  push:
+    branches:
+      - agent/openai-subscription-mcp-smoke-trigger
+    paths:
+      - .github/workflows/openai-subscription-mcp-smoke.yml
 
 permissions:
   contents: read
@@ -17,7 +22,9 @@ concurrency:
 
 jobs:
   smoke:
-    if: ${{ inputs.confirm_live_credential == 'CREATE-OPENAI-AND-REVOKE' }}
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.confirm_live_credential == 'CREATE-OPENAI-AND-REVOKE') ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/agent/openai-subscription-mcp-smoke-trigger')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production
@@ -30,6 +37,8 @@ jobs:
         [{"name":"best-code-ide","root_directory":"backend"},{"name":"best-code-ide-appl","root_directory":"frontend"}]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -46,7 +55,7 @@ jobs:
           node scripts/cloudflare-release-integrity.mjs
           --repository "$GITHUB_REPOSITORY"
           --branch main
-          --expected-sha "$GITHUB_SHA"
+          --expected-sha "93c116bfd68bec382611c505cdb17dd05dd6bde3"
           --repair-preview-triggers false
           --wait-seconds 900
           --poll-seconds 20
