@@ -1,0 +1,5 @@
+OpenAI subscription MCP production smoke trigger.
+
+Requested: 2026-07-24
+Reason: verify the merged Chat 9 subscription MCP integration in production.
+Lifecycle: create one short-lived scoped credential, verify read-only access, then revoke it in the same workflow run.
