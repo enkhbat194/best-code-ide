@@ -45,7 +45,7 @@ async function digest(value: string): Promise<Uint8Array> {
   return new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)))
 }
 
-async function isAuthorized(req: Request, env: Env): Promise<boolean> {
+export async function isAuthorized(req: Request, env: Pick<Env, 'AUTH_TOKEN'>): Promise<boolean> {
   const header = req.headers.get('Authorization') ?? ''
   const token = header.startsWith('Bearer ')
     ? header.slice(7)
@@ -155,7 +155,12 @@ export default {
       return missionResponse
     }
 
-    if (url.pathname === '/mcp' && (req.method === 'POST' || req.method === 'GET' || req.method === 'DELETE')) return handleMcp(req, env)
+    if (
+      (url.pathname === '/mcp' || url.pathname === '/mcp/subscription') &&
+      (req.method === 'POST' || req.method === 'GET' || req.method === 'DELETE')
+    ) {
+      return handleMcp(req, env)
+    }
 
     const actionResponse = await handleActions(req, env, url)
     if (actionResponse) return actionResponse
