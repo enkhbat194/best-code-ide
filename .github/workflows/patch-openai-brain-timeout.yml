@@ -1,0 +1,111 @@
+name: Apply OpenAI Brain smoke timeout patch
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - reopened
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ github.head_ref == 'agent/extend-openai-brain-smoke-timeout' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/extend-openai-brain-smoke-timeout
+          token: ${{ github.token }}
+      - name: Extend only MCP RPC timeout
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          smoke = Path('scripts/scoped-subscription-auth-smoke.mjs')
+          text = smoke.read_text()
+
+          marker = "const IDENTIFIER_PATTERN = /^[A-Za-z0-9._:@/-]+$/\n"
+          if 'const MCP_RPC_TIMEOUT_MS = 120_000' not in text:
+              if marker not in text:
+                  raise SystemExit('identifier marker not found')
+              text = text.replace(marker, marker + 'const MCP_RPC_TIMEOUT_MS = 120_000\n', 1)
+
+          text, count = re.subn(
+              r'async function requestJson\(fetchImpl, url, init, expectedStatus\) \{',
+              'async function requestJson(fetchImpl, url, init, expectedStatus, timeoutMs = 30_000) {',
+              text,
+              count=1,
+          )
+          if count != 1:
+              raise SystemExit('requestJson signature not found')
+
+          text, count = re.subn(
+              r'const timer = setTimeout\(\(\) => controller\.abort\(\), 30_000\)',
+              'const timer = setTimeout(() => controller.abort(), timeoutMs)',
+              text,
+              count=1,
+          )
+          if count != 1:
+              raise SystemExit('requestJson timer not found')
+
+          provider_header = "      'X-BestCode-Agent-Provider': 'spoofed-provider',\n"
+          timeout_header = "      'X-BestCode-Timeout-Ms': String(MCP_RPC_TIMEOUT_MS),\n"
+          if timeout_header not in text:
+              if provider_header not in text:
+                  raise SystemExit('RPC provider header not found')
+              text = text.replace(provider_header, provider_header + timeout_header, 1)
+
+          old = "  }, expectedStatus)\n  assertNoScopedSecret(result.raw)"
+          new = "  }, expectedStatus, MCP_RPC_TIMEOUT_MS)\n  assertNoScopedSecret(result.raw)"
+          if old not in text:
+              raise SystemExit('RPC requestJson call not found')
+          text = text.replace(old, new, 1)
+          smoke.write_text(text)
+
+          tests = Path('scripts/scoped-subscription-auth-smoke.test.mjs')
+          text = tests.read_text()
+          old = "calls.push({ path: url.pathname, project: url.searchParams.get('project_id'), authorization: init.headers?.Authorization })"
+          new = "calls.push({ path: url.pathname, project: url.searchParams.get('project_id'), authorization: init.headers?.Authorization, timeout: init.headers?.['X-BestCode-Timeout-Ms'] })"
+          if old not in text:
+              raise SystemExit('fake call capture not found')
+          text = text.replace(old, new, 1)
+          assertion_marker = "  assert.equal(evidence.agent_id, 'github-actions-openai-mcp-smoke')\n"
+          timeout_assertion = "  assert.ok(fake.calls.some((call) => call.timeout === '120000'))\n"
+          if timeout_assertion not in text:
+              if assertion_marker not in text:
+                  raise SystemExit('OpenAI test assertion marker not found')
+              text = text.replace(assertion_marker, assertion_marker + timeout_assertion, 1)
+          tests.write_text(text)
+
+          trigger = Path('.github/triggers/openai-subscription-mcp-smoke.txt')
+          text = trigger.read_text()
+          text = re.sub(
+              r'Trigger nonce: .*',
+              'Trigger nonce: 2026-07-24-openai-mcp-production-smoke-7',
+              text,
+              count=1,
+          )
+          text = re.sub(
+              r'Reason: .*',
+              'Reason: verify the Chat 9 subscription MCP integration with a bounded 120-second MCP RPC timeout.',
+              text,
+              count=1,
+          )
+          trigger.write_text(text)
+
+          Path('.github/workflows/patch-openai-brain-timeout.yml').unlink()
+          PY
+      - name: Commit patch
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "Extend OpenAI Brain smoke RPC timeout"
+          git push origin HEAD:agent/extend-openai-brain-smoke-timeout
