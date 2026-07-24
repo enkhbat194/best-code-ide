@@ -1,6 +1,6 @@
 OpenAI subscription MCP production smoke trigger.
 
 Requested: 2026-07-24
-Trigger nonce: 2026-07-24-openai-mcp-production-smoke-6
-Reason: verify the Chat 9 subscription MCP integration with a schema-minimum bounded Brain export smoke.
+Trigger nonce: 2026-07-24-openai-mcp-production-smoke-7
+Reason: verify the Chat 9 subscription MCP integration with a bounded 120-second MCP RPC timeout.
 Lifecycle: create one short-lived scoped credential, verify read-only access, then revoke it in the same workflow run.

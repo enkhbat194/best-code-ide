@@ -12,7 +12,7 @@ function fakeProduction({ agentName, provider, failTool = '' }) {
   const calls = []
   const fetchImpl = async (input, init = {}) => {
     const url = new URL(input)
-    calls.push({ path: url.pathname, project: url.searchParams.get('project_id'), authorization: init.headers?.Authorization })
+    calls.push({ path: url.pathname, project: url.searchParams.get('project_id'), authorization: init.headers?.Authorization, timeout: init.headers?.['X-BestCode-Timeout-Ms'] })
     if (url.pathname === '/api/subscription/credentials' && init.method === 'GET') {
       if (init.headers?.Authorization === 'Bearer owner-secret') {
         return response({ items: [{
@@ -110,6 +110,7 @@ test('OpenAI closeout profile reads Brain, Mission, and repository status with a
   assert.equal(evidence.schema_version, 'bestcode-openai-subscription-mcp-smoke-v1')
   assert.equal(evidence.provider, 'openai')
   assert.equal(evidence.agent_id, 'github-actions-openai-mcp-smoke')
+  assert.ok(fake.calls.some((call) => call.timeout === '120000'))
   for (const check of [
     'brain_export_summary', 'mission_context_get', 'repository_status',
     'wrong_project_denied', 'full_endpoint_denied', 'mutation_denied',
