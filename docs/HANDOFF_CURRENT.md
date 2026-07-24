@@ -45,3 +45,17 @@ GitHub repository `enkhbat194/best-code-ide` доторх `docs/HANDOFF_CURRENT.
 - Targeted Package B plus read-only, branch, and Mission lease regressions: 37 passed.
 - Backend TypeScript typecheck: passed.
 - Next: Package C owner write-task approval, live Mission/attempt/lease validation on issue and every mutation, owner API/OpenAPI, progress/result/audit integration, and automatic revoke on terminal execution state.
+
+## Chat 11 Package C WIP shutdown checkpoint
+
+- Branch/starting HEAD: `agent/chat11-bounded-write-agent` from Package B commit `520a442`.
+- Added authoritative Mission Durable Object validation for project, Mission, active plan, running approval-required task, owner-approved gate, active attempt, active lease, fencing token, assigned agent, approval record, and exact task path scope.
+- Owner credential issue now requires that complete live authority intersection.
+- Every bounded mutation revalidates Mission authority before durable usage reservation and execution.
+- Added owner-only issue/list/get/revoke, task status, and emergency task-revoke APIs.
+- Added separate `/openapi-bounded-write.json` owner API contract so credential administration is not advertised by the agent MCP profile.
+- Added bounded Mission progress/result/lease-release tool support; owner approval tools remain absent.
+- Terminal result/block/cancel/release/rejection/Mission cancellation triggers best-effort credential cleanup; Mission state independently remains fail-closed.
+- Added audit events for issue, denial, idempotent replay, emergency revoke, and terminal cleanup without raw credential data.
+- Package C targeted tests cover active/stale task, attempt, lease, fencing, approval, cancellation, scope widening, one-time secret, emergency revoke, automatic terminal revoke, and OpenAPI separation.
+- This is a WIP checkpoint, not Package C completion. Still required: finish full audit-event coverage review, add/verify bounded MCP progress/result integration tests, update canonical architecture/roadmap docs, run the complete backend/frontend regression suite, and continue Package D production smoke workflow.

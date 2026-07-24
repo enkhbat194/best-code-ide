@@ -76,6 +76,13 @@ const BOUNDED_MUTATION_TOOL_NAMES = new Set([
   'test_start',
   'test_status',
   'task_get',
+  'mission_execution_status',
+  'mission_task_get',
+  'mission_attempt_get',
+  'mission_event_list',
+  'mission_task_progress_append',
+  'mission_task_result_submit',
+  'mission_task_lease_release',
 ])
 export const boundedWriteGatewayTools: readonly GatewayTool[] = [
   ...subscriptionGatewayTools,

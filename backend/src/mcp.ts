@@ -207,6 +207,16 @@ function boundedWriteArguments(
     args.base = 'main'
     args.draft = true
   }
+  if (name.startsWith('mission_')) {
+    args.mission_id = principal.mission_id
+    args.task_id = principal.task_id
+    args.attempt_id = principal.attempt_id
+    args.lease_id = principal.lease_id
+    args.fencing_token = principal.fencing_token
+    if (name === 'mission_task_progress_append' || name === 'mission_task_result_submit' || name === 'mission_task_lease_release') {
+      args.idempotency_key = raw.idempotency_key
+    }
+  }
   if (typeof args.path === 'string') {
     const path = args.path.replace(/^\/+/, '')
     if (principal.denied_paths.some((pattern) => globMatches(pattern, path))) throw new Error('PROTECTED_PATH_DENIED')
@@ -220,6 +230,7 @@ const BOUNDED_MUTATIONS = new Set([
   'repository_create_branch', 'repository_write_file', 'repository_apply_patch',
   'repository_commit', 'repository_push', 'repository_create_pull_request',
   'build_start', 'test_start',
+  'mission_task_progress_append', 'mission_task_result_submit', 'mission_task_lease_release',
 ])
 
 function boundedOperationCost(name: string, args: Record<string, unknown>) {
@@ -232,6 +243,35 @@ function boundedOperationCost(name: string, args: Record<string, unknown>) {
     pushes: name === 'repository_push' ? 1 : 0,
     pull_requests: name === 'repository_create_pull_request' ? 1 : 0,
   }
+}
+
+async function persistBoundedDenial(
+  env: Env,
+  req: Request,
+  principal: Extract<RequestPrincipal, { kind: 'bounded-write' }>,
+  tool: string,
+  code: string,
+  requestId?: string,
+): Promise<void> {
+  await persistSecurityAudit(env, 'bounded_write_mutation_denied', {
+    path: new URL(req.url).pathname,
+    method: req.method,
+    identity: 'unknown',
+    request_id: requestId,
+    credential_id: principal.credential_id,
+    project_id: principal.project_id,
+    mission_id: principal.mission_id,
+    task_id: principal.task_id,
+    attempt_id: principal.attempt_id,
+    lease_id: principal.lease_id,
+    fencing_token: principal.fencing_token,
+    agent_id: principal.agent_id,
+    provider: principal.provider,
+    branch: principal.branch,
+    scope_hash: principal.scope_hash,
+    tool,
+    denial_code: code,
+  }).catch(() => undefined)
 }
 
 /** Stateless JSON-response Streamable HTTP MCP endpoint. */
@@ -327,6 +367,7 @@ export async function handleMcp(
       if (!name) return rpcError(message.id, -32602, 'Missing tool name')
       if (!isKnownGatewayTool(name)) return rpcError(message.id, -32602, `Unknown MCP tool: ${name}`)
       if (principal.kind === 'bounded-write' && !principal.allowed_tools.includes(name)) {
+        await persistBoundedDenial(env, effectiveRequest, principal, name, 'TOOL_SCOPE_DENIED')
         return rpcError(message.id, -32001, 'Tool is outside credential scope', 403, { code: 'TOOL_SCOPE_DENIED' })
       }
       if (args !== undefined && (!args || typeof args !== 'object' || Array.isArray(args))) {
@@ -341,13 +382,16 @@ export async function handleMcp(
         try {
           effectiveArgs = boundedWriteArguments(principal, name, effectiveArgs)
         } catch (error) {
+          const code = error instanceof Error ? error.message : 'BOUNDED_WRITE_SCOPE_DENIED'
+          await persistBoundedDenial(env, effectiveRequest, principal, name, code, context.request_id)
           return rpcError(message.id, -32001, 'Request is outside credential scope', 403, {
-            code: error instanceof Error ? error.message : 'BOUNDED_WRITE_SCOPE_DENIED',
+            code,
           })
         }
         if (BOUNDED_MUTATIONS.has(name)) {
           const idempotencyKey = context.idempotency_key
           if (!idempotencyKey) {
+            await persistBoundedDenial(env, effectiveRequest, principal, name, 'IDEMPOTENCY_KEY_REQUIRED', context.request_id)
             return rpcError(message.id, -32001, 'Idempotency-Key is required for bounded mutations', 400, {
               code: 'IDEMPOTENCY_KEY_REQUIRED',
             })
@@ -359,6 +403,23 @@ export async function handleMcp(
               ...boundedOperationCost(name, effectiveArgs),
             })
             if (authorization.replayed) {
+              await persistSecurityAudit(env, 'bounded_write_idempotent_replay', {
+                identity: 'unknown',
+                request_id: context.request_id,
+                credential_id: principal.credential_id,
+                project_id: principal.project_id,
+                mission_id: principal.mission_id,
+                task_id: principal.task_id,
+                attempt_id: principal.attempt_id,
+                lease_id: principal.lease_id,
+                fencing_token: principal.fencing_token,
+                agent_id: principal.agent_id,
+                provider: principal.provider,
+                branch: principal.branch,
+                scope_hash: principal.scope_hash,
+                tool: name,
+                idempotency_key: idempotencyKey,
+              }).catch(() => undefined)
               return rpcResponse(message.id, {
                 content: [{ type: 'text', text: JSON.stringify({ ok: true, status: 'replayed', idempotency_key: idempotencyKey }) }],
                 structuredContent: {
@@ -370,8 +431,10 @@ export async function handleMcp(
               }, methodHeaders(effectiveRequest, 'tools/call', name))
             }
           } catch (error) {
+            const code = error instanceof Error ? error.message : 'BOUNDED_WRITE_OPERATION_DENIED'
+            await persistBoundedDenial(env, effectiveRequest, principal, name, code, context.request_id)
             return rpcError(message.id, -32001, 'Bounded mutation authorization denied', 403, {
-              code: error instanceof Error ? error.message : 'BOUNDED_WRITE_OPERATION_DENIED',
+              code,
             })
           }
         }

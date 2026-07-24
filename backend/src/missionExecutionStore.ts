@@ -25,5 +25,40 @@ export function commandMissionExecution(
   env: Env,
   input: ExecutionCommand,
 ): Promise<{ state: MissionExecutionState; replayed: boolean }> {
-  return request(env, input.mission_id, { method: 'POST', body: JSON.stringify(input) })
+  return request<{ state: MissionExecutionState; replayed: boolean }>(
+    env,
+    input.mission_id,
+    { method: 'POST', body: JSON.stringify(input) },
+  ).then(async (result) => {
+    if (![
+      'mission_task_result_submit',
+      'mission_task_block',
+      'mission_task_cancel',
+      'mission_task_lease_release',
+      'mission_execution_reject_gate',
+      'mission_execution_cancel',
+    ].includes(input.command)) return result
+    try {
+      const { revokeAllBoundedWriteCredentials } = await import('./boundedWriteCredentials')
+      const revoked = await revokeAllBoundedWriteCredentials(env, {
+        project_id: input.project_id,
+        mission_id: input.mission_id,
+        ...(typeof input.args.task_id === 'string' ? { task_id: input.args.task_id } : {}),
+      })
+      if (revoked.length) {
+        const { persistSecurityAudit } = await import('./securityAudit')
+        await persistSecurityAudit(env, 'bounded_write_terminal_cleanup', {
+          identity: 'unknown',
+          project_id: input.project_id,
+          mission_id: input.mission_id,
+          task_id: typeof input.args.task_id === 'string' ? input.args.task_id : null,
+          execution_command: input.command,
+          revoked_credential_ids: revoked.map((item) => item.credential_id),
+        })
+      }
+    } catch {
+      // Mission state remains authoritative and already makes every mutation fail closed.
+    }
+    return result
+  })
 }

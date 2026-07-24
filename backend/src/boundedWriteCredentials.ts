@@ -1,4 +1,8 @@
 import { getProject } from './projects'
+import {
+  assertBoundedWriteMissionAuthority,
+  missionBindingFromPrincipal,
+} from './boundedWriteMissionAuthority'
 import { sha256Hex } from './subscriptionCredentials'
 import type { Env } from './types'
 import {
@@ -176,9 +180,30 @@ export async function boundedWriteCredentialCreate(
   return { credential: payload.credential as PublicBoundedWriteCredential, secret: rawSecret }
 }
 
+export async function issueApprovedBoundedWriteCredential(
+  env: Env,
+  input: IssueBoundedWriteCredentialInput,
+  now = new Date().toISOString(),
+): Promise<IssuedBoundedWriteCredential> {
+  await assertBoundedWriteMissionAuthority(env, input, new Date(now))
+  return boundedWriteCredentialCreate(env, input, now)
+}
+
 export async function boundedWriteCredentialGet(env: Env, credentialId: string): Promise<PublicBoundedWriteCredential> {
   const payload = await storeRequest(env, `/bounded-write-credentials/${encodeURIComponent(identifier(credentialId, 'credential_id', 64))}`)
   return payload.credential as PublicBoundedWriteCredential
+}
+
+export async function boundedWriteCredentialList(
+  env: Env,
+  filters: { project_id?: string; mission_id?: string; task_id?: string } = {},
+): Promise<PublicBoundedWriteCredential[]> {
+  const query = new URLSearchParams()
+  for (const [key, value] of Object.entries(filters)) {
+    if (value) query.set(key, identifier(value, key, 64))
+  }
+  const payload = await storeRequest(env, `/bounded-write-credentials${query.size ? `?${query}` : ''}`)
+  return Array.isArray(payload.items) ? payload.items as PublicBoundedWriteCredential[] : []
 }
 
 export async function boundedWriteCredentialRevoke(env: Env, credentialId: string): Promise<PublicBoundedWriteCredential> {
@@ -186,6 +211,15 @@ export async function boundedWriteCredentialRevoke(env: Env, credentialId: strin
     method: 'POST',
   })
   return payload.credential as PublicBoundedWriteCredential
+}
+
+export async function revokeAllBoundedWriteCredentials(
+  env: Env,
+  filters: { project_id: string; mission_id?: string; task_id?: string },
+): Promise<PublicBoundedWriteCredential[]> {
+  const items = await boundedWriteCredentialList(env, filters)
+  const active = items.filter((item) => item.status === 'active')
+  return Promise.all(active.map((item) => boundedWriteCredentialRevoke(env, item.credential_id)))
 }
 
 export function looksLikeBoundedWriteCredential(value: string): boolean {
@@ -234,6 +268,11 @@ export async function authorizeBoundedWriteOperation(
     now?: string
   },
 ): Promise<{ replayed: boolean; usage: BoundedWritePrincipal['usage'] }> {
+  await assertBoundedWriteMissionAuthority(
+    env,
+    missionBindingFromPrincipal(principal),
+    input.now ? new Date(input.now) : new Date(),
+  )
   const response = await storeStub(env).fetch(
     `https://security-audit-store/bounded-write-credentials/${encodeURIComponent(principal.credential_id)}/authorize-operation`,
     {

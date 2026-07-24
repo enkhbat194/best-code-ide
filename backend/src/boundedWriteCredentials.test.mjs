@@ -16,6 +16,12 @@ import {
   DEFAULT_BOUNDED_WRITE_TTL_SECONDS,
 } from './boundedWriteCredentialTypes.ts'
 import { SecurityAuditStore } from './securityAuditStore.ts'
+import { ApprovalStore } from './approvalStore.ts'
+import { assertBoundedWriteMissionAuthority } from './boundedWriteMissionAuthority.ts'
+import { issueApprovedBoundedWriteCredential } from './boundedWriteCredentials.ts'
+import { handleBoundedWriteCredentialApi } from './boundedWriteCredentialApi.ts'
+import { commandMissionExecution } from './missionExecutionStore.ts'
+import { boundedWriteOpenapiSpec } from './boundedWriteOpenapi.ts'
 import { subscriptionToolNames } from './subscriptionTools.ts'
 
 class MemoryStorage {
@@ -33,13 +39,17 @@ class MemoryStorage {
     if (options.reverse) entries.reverse()
     return new Map(entries.map(([key, value]) => [key, structuredClone(value)]))
   }
+  async transaction(callback) { return callback(this) }
 }
 
 function environment() {
   const storage = new MemoryStorage()
   const durable = new SecurityAuditStore({ storage })
+  const approvalStorage = new MemoryStorage()
+  const approvalDurable = new ApprovalStore({ storage: approvalStorage })
   return {
     storage,
+    approvalStorage,
     env: {
       GITHUB_TOKEN: 'test-github-token',
       AUTH_TOKEN: 'test-owner-token',
@@ -50,8 +60,75 @@ function environment() {
         idFromName: (name) => name,
         get: () => ({ fetch: (url, init) => durable.fetch(new Request(url, init)) }),
       },
+      APPROVALS: {
+        idFromName: (name) => name,
+        get: () => ({ fetch: (url, init) => approvalDurable.fetch(new Request(url, init)) }),
+      },
     },
   }
+}
+
+async function seedApprovedMission(approvalStorage, overrides = {}) {
+  const state = {
+    schema_version: 'bestcode-mission-execution-state-v1',
+    project_id: baseInput.project_id,
+    mission_id: baseInput.mission_id,
+    version: 7,
+    active_plan_id: baseInput.execution_plan_id,
+    plans: [{
+      plan_id: baseInput.execution_plan_id,
+      project_id: baseInput.project_id,
+      mission_id: baseInput.mission_id,
+      status: 'active',
+    }],
+    tasks: [{
+      task_id: baseInput.task_id,
+      project_id: baseInput.project_id,
+      mission_id: baseInput.mission_id,
+      plan_id: baseInput.execution_plan_id,
+      status: 'running',
+      safety_class: 'approval-required',
+      approval_requirement: baseInput.approval_record_id,
+      assigned_agent_id: baseInput.agent_id,
+      lease_id: baseInput.lease_id,
+      scope: baseInput.allowed_paths,
+      version: 4,
+    }],
+    leases: [{
+      lease_id: baseInput.lease_id,
+      project_id: baseInput.project_id,
+      mission_id: baseInput.mission_id,
+      task_id: baseInput.task_id,
+      agent_id: baseInput.agent_id,
+      issued_at: '2026-07-24T00:00:00.000Z',
+      expires_at: '2099-01-01T00:00:00.000Z',
+      heartbeat_at: '2026-07-24T00:00:00.000Z',
+      released_at: null,
+      release_reason: null,
+      attempt_id: baseInput.attempt_id,
+      fencing_token: baseInput.fencing_token,
+    }],
+    attempts: [{
+      attempt_id: baseInput.attempt_id,
+      task_id: baseInput.task_id,
+      agent_id: baseInput.agent_id,
+      lease_id: baseInput.lease_id,
+      started_at: '2026-07-24T00:00:00.000Z',
+      ended_at: null,
+      outcome: 'running',
+    }],
+    events: [],
+    audit_events: [],
+    approval_gates: {
+      [baseInput.task_id]: { status: 'approved', actor: 'owner', decided_at: '2026-07-24T00:00:00.000Z' },
+    },
+    processed_idempotency_keys: [],
+    cancelled_at: null,
+    updated_at: '2026-07-24T00:00:00.000Z',
+    ...overrides,
+  }
+  await approvalStorage.put(`mission-execution:${baseInput.mission_id}`, state)
+  return state
 }
 
 function mcpRequest(secret, body, path = '/mcp/subscription?project_id=bestcode') {
@@ -117,7 +194,9 @@ test('bounded write credential is fully bound, short-lived, and raw-secret-free 
 
   const fetched = await boundedWriteCredentialGet(env, issued.credential.credential_id)
   assert.equal('secret_hash' in fetched, false)
-  assert.deepEqual(fetched, issued.credential)
+  assert.equal(fetched.credential_id, issued.credential.credential_id)
+  assert.equal(fetched.scope_hash, issued.credential.scope_hash)
+  assert.ok(['active', 'expired'].includes(fetched.status))
 })
 
 test('scope hash is deterministic and changes for any authoritative binding change', async () => {
@@ -257,7 +336,8 @@ test('bounded MCP rejects tool, branch, project, and path widening before execut
 })
 
 test('operation accounting is atomic, idempotent, and fails closed at every limit', async () => {
-  const { env } = environment()
+  const { env, approvalStorage } = environment()
+  await seedApprovedMission(approvalStorage)
   const issued = await boundedWriteCredentialCreate(env, {
     ...baseInput,
     limits: {
@@ -340,4 +420,143 @@ test('branch creation checks the approved base SHA before creating a ref', async
   assert.equal(result.structuredContent.ok, false)
   assert.match(result.structuredContent.error.message, /CONTEXT_CONFLICT/)
   assert.equal(createCalls, 0)
+})
+
+test('owner issue requires the authoritative active task, attempt, lease, fencing token, and approval', async () => {
+  const { env, approvalStorage } = environment()
+  await seedApprovedMission(approvalStorage)
+  const issued = await issueApprovedBoundedWriteCredential(env, baseInput)
+  assert.equal(issued.credential.task_id, baseInput.task_id)
+  assert.equal(issued.credential.attempt_id, baseInput.attempt_id)
+  assert.equal(issued.credential.lease_id, baseInput.lease_id)
+  assert.equal(issued.credential.approval_record_id, baseInput.approval_record_id)
+})
+
+test('Mission authority fails closed for every stale or widened binding', async () => {
+  const scenarios = [
+    ['project_id', 'other-project', /PROJECT_MISMATCH/],
+    ['mission_id', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', /not found/i],
+    ['execution_plan_id', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', /PLAN_INACTIVE/],
+    ['task_id', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', /TASK_NOT_FOUND/],
+    ['attempt_id', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', /ATTEMPT_MISMATCH/],
+    ['lease_id', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', /AGENT_OR_LEASE_MISMATCH/],
+    ['fencing_token', 99, /Stale fencing token/],
+    ['agent_id', 'other-agent', /AGENT_OR_LEASE_MISMATCH/],
+    ['approval_record_id', 'other-approval', /APPROVAL_RECORD_MISMATCH/],
+    ['allowed_paths', ['backend/**'], /PATH_SCOPE_WIDENING/],
+  ]
+  for (const [field, value, pattern] of scenarios) {
+    const { env, approvalStorage } = environment()
+    await seedApprovedMission(approvalStorage)
+    await assert.rejects(
+      assertBoundedWriteMissionAuthority(env, { ...baseInput, [field]: value }),
+      pattern,
+      field,
+    )
+  }
+})
+
+test('Mission cancellation, terminal task, released lease, expired lease, inactive attempt, and non-owner approval deny writes', async () => {
+  const mutations = [
+    (state) => ({ ...state, cancelled_at: '2026-07-24T01:00:00.000Z' }),
+    (state) => ({ ...state, tasks: state.tasks.map((task) => ({ ...task, status: 'succeeded' })) }),
+    (state) => ({ ...state, leases: state.leases.map((lease) => ({ ...lease, released_at: '2026-07-24T01:00:00.000Z' })) }),
+    (state) => ({ ...state, leases: state.leases.map((lease) => ({ ...lease, expires_at: '2020-01-01T00:00:00.000Z' })) }),
+    (state) => ({ ...state, attempts: state.attempts.map((attempt) => ({ ...attempt, outcome: 'failed', ended_at: '2026-07-24T01:00:00.000Z' })) }),
+    (state) => ({ ...state, approval_gates: { [baseInput.task_id]: { status: 'approved', actor: null, decided_at: '2026-07-24T00:00:00.000Z' } } }),
+  ]
+  for (const mutate of mutations) {
+    const { env, approvalStorage } = environment()
+    const state = await seedApprovedMission(approvalStorage)
+    await approvalStorage.put(`mission-execution:${baseInput.mission_id}`, mutate(state))
+    await assert.rejects(assertBoundedWriteMissionAuthority(env, baseInput))
+  }
+})
+
+test('owner API issues once, reports task authority, and emergency-revokes without returning stored secrets', async () => {
+  const { env, approvalStorage, storage } = environment()
+  await seedApprovedMission(approvalStorage)
+  const owner = { kind: 'owner', identity: 'owner' }
+  const issueRequest = new Request('https://bestcode.example/api/bounded-write/credentials', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(baseInput),
+  })
+  const issueResponse = await handleBoundedWriteCredentialApi(
+    issueRequest,
+    env,
+    new URL(issueRequest.url),
+    owner,
+  )
+  assert.equal(issueResponse.status, 201)
+  const issued = await issueResponse.json()
+  assert.match(issued.secret, /^bcwrite_v1\./)
+  assert.equal(issued.secret_display, 'one-time')
+  assert.equal(issued.connector_name, 'BestCode Bounded Write')
+
+  const statusRequest = new Request(
+    `https://bestcode.example/api/bounded-write/tasks/${baseInput.task_id}/status?project_id=bestcode&mission_id=${baseInput.mission_id}`,
+  )
+  const statusResponse = await handleBoundedWriteCredentialApi(statusRequest, env, new URL(statusRequest.url), owner)
+  const status = await statusResponse.json()
+  assert.equal(status.approval.status, 'approved')
+  assert.equal(status.approval.actor, 'owner')
+  assert.equal(status.active_lease.lease_id, baseInput.lease_id)
+  assert.equal(status.credentials.length, 1)
+  assert.equal(JSON.stringify(status).includes(issued.secret), false)
+  assert.equal('secret_hash' in status.credentials[0], false)
+
+  const revokeRequest = new Request(
+    `https://bestcode.example/api/bounded-write/tasks/${baseInput.task_id}/revoke-all?project_id=bestcode&mission_id=${baseInput.mission_id}`,
+    { method: 'POST' },
+  )
+  const revokeResponse = await handleBoundedWriteCredentialApi(revokeRequest, env, new URL(revokeRequest.url), owner)
+  const revoked = await revokeResponse.json()
+  assert.equal(revoked.count, 1)
+  assert.equal(revoked.revoked[0].status, 'revoked')
+  assert.equal(JSON.stringify([...storage.values.values()]).includes(issued.secret), false)
+})
+
+test('terminal lease release automatically revokes task credentials while Mission state remains authoritative', async () => {
+  const { env, approvalStorage } = environment()
+  await seedApprovedMission(approvalStorage)
+  const issued = await issueApprovedBoundedWriteCredential(env, baseInput)
+  await commandMissionExecution(env, {
+    command: 'mission_task_lease_release',
+    project_id: baseInput.project_id,
+    mission_id: baseInput.mission_id,
+    actor_id: baseInput.agent_id,
+    idempotency_key: 'terminal-release-0001',
+    now: '2026-07-24T01:00:00.000Z',
+    args: {
+      task_id: baseInput.task_id,
+      lease_id: baseInput.lease_id,
+      fencing_token: baseInput.fencing_token,
+      release_reason: 'test complete',
+    },
+  })
+  const credential = await boundedWriteCredentialGet(env, issued.credential.credential_id)
+  assert.equal(credential.status, 'revoked')
+  await assert.rejects(assertBoundedWriteMissionAuthority(env, baseInput), /TASK_NOT_RUNNING/)
+})
+
+test('bounded write owner OpenAPI is separate, owner-authenticated, and description-bounded', () => {
+  const spec = boundedWriteOpenapiSpec('https://bestcode.example')
+  assert.equal(spec.security[0].bearerAuth.length, 0)
+  const operations = Object.values(spec.paths).flatMap((path) => [path.get, path.post].filter(Boolean))
+  assert.deepEqual(
+    operations.map((operation) => operation.operationId).sort(),
+    [
+      'bounded_write_credential_get',
+      'bounded_write_credential_issue',
+      'bounded_write_credential_list',
+      'bounded_write_credential_revoke',
+      'bounded_write_task_emergency_revoke',
+      'bounded_write_task_status',
+    ],
+  )
+  for (const operation of operations) assert.ok(operation.description.length <= 300, operation.operationId)
+  for (const operation of operations) {
+    assert.doesNotMatch(operation.operationId, /(?:^|_)(merge|deploy|rollback)(?:_|$)/)
+  }
 })

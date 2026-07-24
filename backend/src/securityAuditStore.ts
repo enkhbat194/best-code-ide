@@ -297,6 +297,21 @@ export class SecurityAuditStore {
       return json({ credential: publicBoundedWriteCredential(record, record.issued_at) }, 201)
     }
 
+    if (request.method === 'GET' && url.pathname === '/bounded-write-credentials') {
+      const projectId = cleanString(url.searchParams.get('project_id'), 64)
+      const missionId = cleanString(url.searchParams.get('mission_id'), 64)
+      const taskId = cleanString(url.searchParams.get('task_id'), 64)
+      const values = await this.state.storage.list<BoundedWriteCredentialRecord>({ prefix: BOUNDED_WRITE_CREDENTIAL_PREFIX })
+      const items = [...values.values()]
+        .filter((item) =>
+          (!projectId || item.project_id === projectId) &&
+          (!missionId || item.mission_id === missionId) &&
+          (!taskId || item.task_id === taskId))
+        .sort((left, right) => Date.parse(right.issued_at) - Date.parse(left.issued_at))
+        .map((item) => publicBoundedWriteCredential(item))
+      return json({ items, count: items.length })
+    }
+
     if (request.method === 'POST' && url.pathname === '/bounded-write-credentials/authenticate') {
       const input = await request.json().catch(() => null) as Record<string, unknown> | null
       const credentialId = cleanString(input?.credential_id, 64) ?? ''
