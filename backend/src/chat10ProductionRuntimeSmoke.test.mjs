@@ -72,6 +72,8 @@ test('production controller round-trips the real Mission execution runtime and c
   assert.equal(evidence.scope.production_business_data_accessed, false)
   assert.ok(Object.values(evidence.checks).every(Boolean))
   assert.ok(Object.values(evidence.denials).every((denial) => denial.denied))
+  assert.equal(evidence.denials.agent_identity_spoof.reason_code, 'AGENT_IDENTITY_SPOOF_DENIED')
+  assert.equal(evidence.denials.provider_identity_spoof.reason_code, 'PROVIDER_IDENTITY_SPOOF_DENIED')
   assert.equal(evidence.audit.all_completed, true)
   assert.deepEqual(
     new Set(evidence.audit.required_event_names),
