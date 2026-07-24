@@ -7,6 +7,7 @@ import { readOnlyMcpTools } from './mcpReadTools.ts'
 import { rollbackMcpTools } from './mcpRollbackTools.ts'
 import { safeWriteMcpTools } from './mcpWriteTools.ts'
 import { missionMcpTools } from './missionTools.ts'
+import { missionExecutionMcpTools } from './missionExecutionTools.ts'
 import { openapiSpec } from './openapi.ts'
 import { ACTION_DESCRIPTION_LIMIT, buildActionDescription } from './openapiDescription.ts'
 import { projectBrainMcpTools } from './projectBrainTools.ts'
@@ -25,16 +26,16 @@ test('action descriptions are normalized and bounded below the GPT limit', () =>
   )
 
   assert.ok(Array.from(result).length <= ACTION_DESCRIPTION_LIMIT)
-  assert.ok(result.endsWith('…'))
+  assert.ok(result.endsWith('â€¦'))
   assert.doesNotMatch(result, /\s{2,}/u)
 })
 
 test('description truncation does not split a Unicode code point', () => {
-  const result = buildActionDescription('A😀BC', '', 3)
+  const result = buildActionDescription('AðŸ˜€BC', '', 3)
 
-  assert.equal(result, 'A😀…')
+  assert.equal(result, 'AðŸ˜€â€¦')
   assert.equal(Array.from(result).length, 3)
-  assert.deepEqual(Array.from(result), ['A', '😀', '…'])
+  assert.deepEqual(Array.from(result), ['A', 'ðŸ˜€', 'â€¦'])
 })
 
 test('every generated OpenAPI action uses a bounded description', () => {
@@ -46,6 +47,7 @@ test('every generated OpenAPI action uses a bounded description', () => {
     ...rollbackMcpTools,
     ...projectBrainMcpTools,
     ...missionMcpTools,
+    ...missionExecutionMcpTools,
   ].map((tool) => tool.name)
   const operations = generatedOperations()
 
@@ -69,3 +71,4 @@ test('invalid limits fail closed', () => {
   assert.throws(() => buildActionDescription('x', 'y', 0), RangeError)
   assert.throws(() => buildActionDescription('x', 'y', 1.5), RangeError)
 })
+
