@@ -7,6 +7,7 @@ import { readOnlyMcpTools } from './mcpReadTools.ts'
 import { rollbackMcpTools } from './mcpRollbackTools.ts'
 import { safeWriteMcpTools } from './mcpWriteTools.ts'
 import { missionMcpTools } from './missionTools.ts'
+import { missionExecutionMcpTools } from './missionExecutionTools.ts'
 import { openapiSpec } from './openapi.ts'
 import { ACTION_DESCRIPTION_LIMIT, buildActionDescription } from './openapiDescription.ts'
 import { projectBrainMcpTools } from './projectBrainTools.ts'
@@ -46,6 +47,7 @@ test('every generated OpenAPI action uses a bounded description', () => {
     ...rollbackMcpTools,
     ...projectBrainMcpTools,
     ...missionMcpTools,
+    ...missionExecutionMcpTools,
   ].map((tool) => tool.name)
   const operations = generatedOperations()
 

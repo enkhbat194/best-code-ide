@@ -4,6 +4,7 @@ import { executeReadOnlyMcpTool, readOnlyMcpTools } from './mcpReadTools'
 import { executeRollbackMcpTool, rollbackMcpTools } from './mcpRollbackTools'
 import { executeSafeWriteMcpTool, safeWriteMcpTools } from './mcpWriteTools'
 import { executeMissionMcpTool, missionMcpTools } from './missionTools'
+import { executeMissionExecutionTool, missionExecutionMcpTools } from './missionExecutionTools'
 import { executeProjectBrainMcpTool, projectBrainMcpTools } from './projectBrainTools'
 import { executeSubscriptionTool, subscriptionMcpTools } from './subscriptionTools'
 import type { Env } from './types'
@@ -58,6 +59,7 @@ const legacyToolSources = [
   ...rollbackMcpTools,
   ...projectBrainMcpTools,
   ...missionMcpTools,
+  ...missionExecutionMcpTools,
 ] as const
 
 export const legacyGatewayTools: readonly GatewayTool[] = legacyToolSources as unknown as readonly GatewayTool[]
@@ -74,6 +76,7 @@ const DEPLOYMENT_NAMES = new Set<string>(deploymentMcpTools.map((tool) => tool.n
 const ROLLBACK_NAMES = new Set<string>(rollbackMcpTools.map((tool) => tool.name))
 const PROJECT_BRAIN_NAMES = new Set<string>(projectBrainMcpTools.map((tool) => tool.name))
 const MISSION_NAMES = new Set<string>(missionMcpTools.map((tool) => tool.name))
+const MISSION_EXECUTION_NAMES = new Set<string>(missionExecutionMcpTools.map((tool) => tool.name))
 
 const IRREVERSIBLE_TOOLS = new Set([
   'repository_delete_branch',
@@ -276,6 +279,7 @@ async function executeLegacyTool(
   args: Record<string, unknown>,
   token: string,
   env: Env,
+  context: GatewayRequestContext,
 ): Promise<GatewayToolResult> {
   if (READ_ONLY_NAMES.has(name)) return executeReadOnlyMcpTool(name, args, token, env) as Promise<GatewayToolResult>
   if (SAFE_WRITE_NAMES.has(name)) return executeSafeWriteMcpTool(name, args, token, env) as Promise<GatewayToolResult>
@@ -284,6 +288,7 @@ async function executeLegacyTool(
   if (ROLLBACK_NAMES.has(name)) return executeRollbackMcpTool(name, args, token, env) as Promise<GatewayToolResult>
   if (PROJECT_BRAIN_NAMES.has(name)) return executeProjectBrainMcpTool(name, args, token, env) as Promise<GatewayToolResult>
   if (MISSION_NAMES.has(name)) return executeMissionMcpTool(name, args, token, env) as Promise<GatewayToolResult>
+  if (MISSION_EXECUTION_NAMES.has(name)) return executeMissionExecutionTool(name, args, env, context) as Promise<GatewayToolResult>
   throw new Error(`Unknown BestCode tool: ${name}`)
 }
 
@@ -414,7 +419,7 @@ export async function executeGatewayTool(
     const result = await withTimeout(
       profile === 'subscription-readonly'
         ? executeSubscriptionTool(name, args, token, env, context.project_scope!)
-        : executeLegacyTool(name, args, token, env),
+        : executeLegacyTool(name, args, token, env, context),
       context.timeout_ms,
     )
     return addMetadata(result, context, name, safetyClass, Date.now() - startedAt)

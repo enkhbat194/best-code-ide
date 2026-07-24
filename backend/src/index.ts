@@ -10,6 +10,7 @@ import { handleLlm } from './llm'
 import { handleMaintenance } from './maintenance'
 import { handleMcp } from './mcp'
 import { handleMissionApi } from './missionApi'
+import { handleMissionExecutionApi } from './missionExecutionApi'
 import { openapiSpec } from './openapi'
 import { handleRelease, healthPayload } from './release'
 import { handleRest } from './rest'
@@ -186,6 +187,12 @@ export default {
     if (missionResponse) {
       audit('mission_api', { path: url.pathname, method: req.method, status: missionResponse.status, identity: 'owner' })
       return missionResponse
+    }
+
+    const missionExecutionResponse = await handleMissionExecutionApi(req, env, url)
+    if (missionExecutionResponse) {
+      audit('mission_execution_api', { path: url.pathname, method: req.method, status: missionExecutionResponse.status, identity: 'owner' })
+      return missionExecutionResponse
     }
 
     const actionResponse = await handleActions(req, env, url)

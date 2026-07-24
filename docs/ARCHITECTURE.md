@@ -80,6 +80,21 @@ BestCode PWA ────┘          │
 
 ### Layer B — Mission Orchestration
 
+#### Mission Execution Runtime — CODE READY / NOT PRODUCTION ACTIVATED
+
+`BC-040` нь Mission v1-ийг authoritative objective/context root хэвээр үлдээн, versioned
+Execution Plan, provider-neutral execution Task, hard/optional dependency DAG, capability-based
+assignment, task lease/fencing token, immutable Attempt, append-only progress, evidence-backed
+Result, Blocker, Retry, Cancellation болон Closeout contract нэмсэн.
+
+Owner/full MCP registry нь 7 read, 10 controlled mutation, 3 owner-only operation schema-г
+advertise хийж, durable executor руу dispatch хийнэ. Existing `APPROVALS` Durable Object namespace
+доторх transaction-backed aggregate нь optimistic version, idempotency replay, lease fencing,
+append-only audit, approval gate-ийг authoritative байдлаар хадгална. Иймээс тусдаа binding эсвэл
+storage migration шаардахгүй. Authenticated REST facade нь ижил aggregate-ийг ашиглана.
+Одоогийн `subscription-readonly-v1` profile exact 12 read-only tool хэвээр; write-capable credential
+нээхгүй. Merge/deploy/rollback автомат биш бөгөөд owner approval boundary өөрчлөгдөөгүй.
+
 #### Mission Service — TARGET
 
 Durable mission graph:

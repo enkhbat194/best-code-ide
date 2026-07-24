@@ -1,3 +1,5 @@
+import { applyExecutionCommand, type ExecutionCommand, type MissionExecutionState } from './missionExecutionService'
+
 export type ApprovalStatus =
   | 'pending_approval'
   | 'approved'
@@ -147,6 +149,10 @@ function handoffKey(id: string): string {
   return `handoff:${id}`
 }
 
+function missionExecutionKey(id: string): string {
+  return `mission-execution:${id}`
+}
+
 function validId(value: string): boolean {
   return /^[a-f0-9-]{16,64}$/i.test(value)
 }
@@ -227,6 +233,35 @@ export class ApprovalStore {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url)
     const segments = url.pathname.split('/').filter(Boolean)
+
+    if (segments[0] === 'mission-executions' && segments[1]) {
+      const missionId = segments[1]
+      if (!validId(missionId)) return json({ error: 'Invalid Mission execution id' }, 400)
+      const key = missionExecutionKey(missionId)
+      if (request.method === 'GET' && segments.length === 2) {
+        const state = await this.state.storage.get<MissionExecutionState>(key)
+        return state ? json(state) : json({ error: 'Mission execution not found' }, 404)
+      }
+      if (request.method === 'POST' && segments[2] === 'command') {
+        const input = await request.json().catch(() => null) as ExecutionCommand | null
+        if (!input || input.mission_id !== missionId) return json({ error: 'A matching Mission execution command is required' }, 400)
+        try {
+          const result = await this.state.storage.transaction(async (transaction) => {
+            const current = await transaction.get<MissionExecutionState>(key) ?? null
+            const applied = await applyExecutionCommand(current, input)
+            if (!applied.replayed) await transaction.put(key, applied.state)
+            return applied
+          })
+          return json(result)
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          const status = /not found/i.test(message)
+            ? 404
+            : /mismatch|already|active|expired|stale|cancelled|denied|scope|approval/i.test(message) ? 409 : 400
+          return json({ error: message }, status)
+        }
+      }
+    }
 
     if (request.method === 'POST' && url.pathname === '/project-tasks') {
       const task = (await request.json().catch(() => null)) as ProjectTaskRecord | null

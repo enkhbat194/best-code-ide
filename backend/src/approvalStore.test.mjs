@@ -5,6 +5,7 @@ import { ApprovalStore } from './approvalStore.ts'
 import { executeDeliveryMcpTool } from './mcpDeliveryTools.ts'
 import { executeDeploymentMcpTool } from './mcpDeploymentTools.ts'
 import { executeSafeWriteMcpTool } from './mcpWriteTools.ts'
+import { deterministicExecutionHash } from './missionExecutionSchema.ts'
 
 class MemoryStorage {
   constructor() {
@@ -24,6 +25,10 @@ class MemoryStorage {
   async list(options = {}) {
     const prefix = options.prefix ?? ''
     return new Map([...this.values].filter(([key]) => key.startsWith(prefix)))
+  }
+
+  async transaction(callback) {
+    return callback(this)
   }
 }
 
@@ -302,4 +307,55 @@ test('changed production source SHA invalidates deployment approval without disp
   )).json()
   assert.equal(stored.status, 'superseded')
   assert.match(stored.superseded_reason, /approved-main-sha.*changed-main-sha/)
+})
+
+test('Mission execution aggregate persists commands transactionally and replays idempotently', async () => {
+  const { store, storage } = harness()
+  const missionId = '11111111-1111-1111-1111-111111111111'
+  const planId = '22222222-2222-2222-2222-222222222222'
+  const taskId = '33333333-3333-3333-3333-333333333333'
+  const timestamp = '2026-07-24T00:00:00.000Z'
+  const task = {
+    schema_version: 'bestcode-execution-task-v1', task_id: taskId, project_id: 'bestcode',
+    mission_id: missionId, plan_id: planId, title: 'Task', objective: 'Test durable storage',
+    scope: ['backend/**'], input_references: [], expected_output: 'state', done_criteria: ['stored'],
+    dependencies: [], status: 'planned', safety_class: 'read-only',
+    preferred_agent_capabilities: [], assigned_agent_id: null, lease_id: null,
+    attempt_count: 0, max_attempts: 2, timeout_seconds: 60,
+    idempotency_key: 'task-idempotency-001', progress: 0, result: null,
+    evidence_ids: [], blocker: null, approval_requirement: null, created_at: timestamp,
+    started_at: null, completed_at: null, failed_at: null, cancelled_at: null, version: 1,
+  }
+  const plan = {
+    schema_version: 'bestcode-execution-plan-v1', plan_id: planId, project_id: 'bestcode',
+    mission_id: missionId, objective: 'Durable execution', generated_from_context_version: 1,
+    generated_from_context_hash: 'sha256:context', planning_actor: 'planner',
+    created_at: timestamp, status: 'draft', task_ids: [taskId],
+    dependency_graph: { [taskId]: [] }, safety_constraints: [], approval_gates: [],
+    plan_version: 1, supersedes_plan_id: null, evidence_references: ['ev-plan'],
+    deterministic_hash: '',
+  }
+  plan.deterministic_hash = await deterministicExecutionHash(plan)
+  const input = {
+    command: 'mission_execution_plan_create', project_id: 'bestcode', mission_id: missionId,
+    actor_id: 'planner', idempotency_key: 'create-plan-key-0001', expected_version: 0,
+    now: timestamp, args: { plan, tasks: [task] },
+  }
+  const commandUrl = `https://approval-store/mission-executions/${missionId}/command`
+  const first = await store.fetch(new Request(commandUrl, { method: 'POST', body: JSON.stringify(input) }))
+  assert.equal(first.status, 200)
+  assert.equal((await first.json()).state.version, 1)
+
+  const replay = await store.fetch(new Request(commandUrl, {
+    method: 'POST',
+    body: JSON.stringify({ ...input, expected_version: 1 }),
+  }))
+  const replayed = await replay.json()
+  assert.equal(replayed.replayed, true)
+  assert.equal(replayed.state.plans.length, 1)
+  assert.equal(storage.puts.get(`mission-execution:${missionId}`), 1)
+
+  const read = await store.fetch(new Request(`https://approval-store/mission-executions/${missionId}`))
+  assert.equal(read.status, 200)
+  assert.equal((await read.json()).tasks[0].task_id, taskId)
 })

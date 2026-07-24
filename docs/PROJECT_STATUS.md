@@ -168,6 +168,20 @@ stale approval regression хамгаалалт нэмэгдсэн. Final operati
 
 ## 5. Current live capability vs target
 
+### Mission Execution Runtime foundation — CODE_READY_NOT_MERGED
+
+- `bestcode-execution-plan-v1` болон `bestcode-execution-task-v1` provider-neutral schema;
+- deterministic SHA-256 plan/result hash;
+- fail-closed task state machine болон hard/optional dependency DAG;
+- capability/safety-profile assignment;
+- single-task lease, TTL, heartbeat, takeover fencing token;
+- append-only progress, evidence-required result, blocker/retry/cancel contract;
+- 20 owner/full MCP operation schema;
+- existing `APPROVALS` Durable Object namespace дээр transaction-backed execution aggregate;
+- owner/full MCP executor болон authenticated REST read/command facade;
+- subscription profile exact 12 read-only tool хэвээр;
+- production activation/deploy, write-capable credential, live multi-agent run хийгдээгүй.
+
 | Area | Current | Target gap |
 |---|---|---|
 | Auth | Shared Bearer token | client identity, capability, revoke, rate/replay |

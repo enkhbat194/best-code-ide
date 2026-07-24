@@ -40,6 +40,36 @@ export function assertNoScopedSecret(value) {
   if (SECRET_PATTERN.test(raw)) throw new Error('Scoped credential leaked into evidence')
 }
 
+export function assertScopedCredentialLeakSurfaces({
+  creationResponse,
+  repository = '',
+  audit = '',
+  mcpResponses = [],
+  logs = '',
+  artifacts = [],
+}) {
+  const createdSecret = text(creationResponse?.body?.secret, 4096)
+  if (createdSecret && !/^bcsub_v1\./.test(createdSecret)) throw new Error('Credential creation response is invalid')
+  // The owner-only creation response is the single intentional plaintext surface.
+  // It is deliberately excluded; every durable or observable surface is scanned.
+  for (const [surface, value] of [
+    ['repository', repository],
+    ['audit', audit],
+    ['mcp_response', mcpResponses],
+    ['log', logs],
+    ['artifact', artifacts],
+  ]) {
+    try {
+      assertNoScopedSecret(value)
+    } catch {
+      throw new Error(`Scoped credential leaked into ${surface}`)
+    }
+    if (createdSecret && JSON.stringify(value).includes(createdSecret)) {
+      throw new Error(`Created scoped credential leaked into ${surface}`)
+    }
+  }
+}
+
 async function requestJson(fetchImpl, url, init, expectedStatus, timeoutMs = 30_000) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
