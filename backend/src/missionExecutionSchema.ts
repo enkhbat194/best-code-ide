@@ -72,7 +72,7 @@ const TASK_TRANSITIONS: Record<ExecutionTaskStatus, ReadonlySet<ExecutionTaskSta
   blocked: new Set(['ready', 'cancelled', 'superseded']),
   ready: new Set(['leased', 'blocked', 'cancelled', 'superseded']),
   leased: new Set(['running', 'ready', 'blocked', 'cancelled']),
-  running: new Set(['waiting_for_input', 'waiting_for_approval', 'succeeded', 'failed', 'cancelled']),
+  running: new Set(['blocked', 'waiting_for_input', 'waiting_for_approval', 'succeeded', 'failed', 'cancelled']),
   waiting_for_input: new Set(['running', 'failed', 'cancelled']),
   waiting_for_approval: new Set(['running', 'failed', 'cancelled']),
   succeeded: new Set(),
@@ -144,10 +144,41 @@ export function executionTaskReadiness(
 
 export function assertExecutionPlan(plan: ExecutionPlan, tasks: ExecutionTask[]): void {
   if (plan.plan_version < 1 || !Number.isInteger(plan.plan_version)) throw new Error('plan_version must be a positive integer')
+  if (plan.status !== 'draft') throw new Error('A new Execution plan must start in draft status')
   if (plan.task_ids.length !== new Set(plan.task_ids).size) throw new Error('Execution plan contains duplicate task IDs')
+  if (plan.task_ids.length !== tasks.length) throw new Error('Execution plan task list does not exactly match its tasks')
   if (tasks.some((task) => task.plan_id !== plan.plan_id || task.project_id !== plan.project_id)) {
     throw new Error('Execution plan task scope mismatch')
   }
   if (plan.task_ids.some((id) => !tasks.some((task) => task.task_id === id))) throw new Error('Execution plan references a missing task')
+  for (const task of tasks) {
+    if (task.status !== 'planned' || task.version !== 1 || task.attempt_count !== 0 || task.assigned_agent_id || task.lease_id) {
+      throw new Error(`Execution task ${task.task_id} must start unassigned at planned version 1`)
+    }
+    if (!task.title.trim() || !task.objective.trim() || task.scope.length === 0 || task.done_criteria.length === 0) {
+      throw new Error(`Execution task ${task.task_id} is missing its bounded work contract`)
+    }
+    if (!Number.isInteger(task.max_attempts) || task.max_attempts < 1 || task.max_attempts > 20) {
+      throw new Error(`Execution task ${task.task_id} has an invalid max_attempts`)
+    }
+    if (!Number.isInteger(task.timeout_seconds) || task.timeout_seconds < 15 || task.timeout_seconds > 86_400) {
+      throw new Error(`Execution task ${task.task_id} has an invalid timeout`)
+    }
+    if (!/^[A-Za-z0-9._:-]{16,128}$/.test(task.idempotency_key)) {
+      throw new Error(`Execution task ${task.task_id} has an invalid idempotency key`)
+    }
+    const declared = plan.dependency_graph[task.task_id]
+    if (!Array.isArray(declared)) throw new Error(`Execution plan is missing dependency graph entry for ${task.task_id}`)
+    const edgeKey = (edge: TaskDependency): string => `${edge.task_id}:${edge.kind}`
+    const fromPlan = declared.map(edgeKey).sort()
+    const fromTask = task.dependencies.map(edgeKey).sort()
+    if (fromPlan.length !== fromTask.length || fromPlan.some((edge, index) => edge !== fromTask[index])) {
+      throw new Error(`Execution plan dependency graph mismatch for ${task.task_id}`)
+    }
+  }
+  const graphIds = Object.keys(plan.dependency_graph)
+  if (graphIds.length !== tasks.length || graphIds.some((id) => !plan.task_ids.includes(id))) {
+    throw new Error('Execution plan dependency graph contains an unknown task')
+  }
   assertExecutionGraph(plan.mission_id, tasks)
 }
