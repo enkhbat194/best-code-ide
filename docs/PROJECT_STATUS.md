@@ -177,8 +177,10 @@ stale approval regression хамгаалалт нэмэгдсэн. Final operati
 - single-task lease, TTL, heartbeat, takeover fencing token;
 - append-only progress, evidence-required result, blocker/retry/cancel contract;
 - 20 owner/full MCP operation schema;
+- existing `APPROVALS` Durable Object namespace дээр transaction-backed execution aggregate;
+- owner/full MCP executor болон authenticated REST read/command facade;
 - subscription profile exact 12 read-only tool хэвээр;
-- durable execution store migration, production mutation profile, live multi-agent run хийгдээгүй.
+- production activation/deploy, write-capable credential, live multi-agent run хийгдээгүй.
 
 | Area | Current | Target gap |
 |---|---|---|
