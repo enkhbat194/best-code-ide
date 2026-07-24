@@ -1,0 +1,73 @@
+name: Apply bounded OpenAI Brain smoke patch
+
+on:
+  push:
+    branches:
+      - agent/bound-openai-brain-smoke
+    paths:
+      - .github/workflows/patch-bound-openai-brain-smoke.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/bound-openai-brain-smoke
+      - name: Bound Brain export smoke and add regression assertion
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          smoke = Path('scripts/scoped-subscription-auth-smoke.mjs')
+          text = smoke.read_text()
+          old = "name: 'brain_export_summary', arguments: { project_id: projectId },"
+          new = """name: 'brain_export_summary', arguments: {
+                  project_id: projectId,
+                  max_chars_per_document: 1000,
+                  max_total_document_chars: 5000,
+                },"""
+          if text.count(old) != 1:
+              raise SystemExit('Expected one brain_export_summary smoke call')
+          smoke.write_text(text.replace(old, new))
+
+          tests = Path('scripts/scoped-subscription-auth-smoke.test.mjs')
+          text = tests.read_text()
+          old = """    if (request.params.name === 'brain_export_summary') {
+              return response({ jsonrpc: '2.0', id: request.id, result: { structuredContent: {"""
+          new = """    if (request.params.name === 'brain_export_summary') {
+              assert.deepEqual(request.params.arguments, {
+                project_id: 'bestcode',
+                max_chars_per_document: 1000,
+                max_total_document_chars: 5000,
+              })
+              return response({ jsonrpc: '2.0', id: request.id, result: { structuredContent: {"""
+          if text.count(old) != 1:
+              raise SystemExit('Expected one brain_export_summary fake branch')
+          tests.write_text(text.replace(old, new))
+
+          trigger = Path('.github/triggers/openai-subscription-mcp-smoke.txt')
+          text = trigger.read_text()
+          text = text.replace(
+              'Trigger nonce: 2026-07-24-openai-mcp-production-smoke-5',
+              'Trigger nonce: 2026-07-24-openai-mcp-production-smoke-6',
+          ).replace(
+              'Reason: verify the Chat 9 subscription MCP integration with stale-credential cleanup and persistent redacted failure evidence.',
+              'Reason: verify the Chat 9 subscription MCP integration with a schema-minimum bounded Brain export smoke.',
+          )
+          trigger.write_text(text)
+
+          Path('.github/workflows/patch-bound-openai-brain-smoke.yml').unlink()
+          PY
+      - name: Commit patch
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add scripts/scoped-subscription-auth-smoke.mjs scripts/scoped-subscription-auth-smoke.test.mjs .github/triggers/openai-subscription-mcp-smoke.txt .github/workflows/patch-bound-openai-brain-smoke.yml
+          git commit -m "Bound OpenAI Brain smoke payload"
+          git push origin HEAD:agent/bound-openai-brain-smoke
