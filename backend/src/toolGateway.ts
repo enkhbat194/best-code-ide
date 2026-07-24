@@ -445,4 +445,3 @@ export async function executeGatewayTool(
     )
   }
 }
-
