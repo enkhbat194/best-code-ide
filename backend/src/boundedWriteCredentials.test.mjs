@@ -300,6 +300,9 @@ test('bounded MCP advertises only credential-allowed tools and excludes owner ca
     'rollback_request', 'approval_decide', 'subscription_credential_create',
   ]) assert.equal(names.includes(forbidden), false)
   for (const tool of body.result.tools) assert.ok(tool.description.length <= 300)
+  const writeFile = body.result.tools.find((tool) => tool.name === 'repository_write_file')
+  assert.match(writeFile.inputSchema.properties.expected_branch_head_sha.pattern, /40,64/)
+  assert.match(writeFile.inputSchema.properties.expected_old_hash.pattern, /absent/)
 })
 
 test('bounded MCP rejects tool, branch, project, and path widening before execution', async () => {
@@ -790,7 +793,7 @@ test('bounded MCP progress and result use the live Mission lease then terminally
   )).principal
   assert.equal(principal?.kind, 'bounded-write')
 
-  const progressRequest = mcpRequest(issued.secret, {
+  const wrongMissionRequest = mcpRequest(issued.secret, {
     jsonrpc: '2.0',
     id: 2,
     method: 'tools/call',
@@ -799,9 +802,26 @@ test('bounded MCP progress and result use the live Mission lease then terminally
       arguments: {
         project_id: baseInput.project_id,
         mission_id: 'spoofed-mission',
-        task_id: 'spoofed-task',
-        lease_id: 'spoofed-lease',
-        fencing_token: 999,
+        expected_version: 7,
+        event: {
+          event_id: '66666666-6666-6666-6666-666666666666',
+          kind: 'tests_running',
+          message: 'Running approved tests',
+        },
+      },
+    },
+  }, undefined, { 'Idempotency-Key': 'bounded-progress-wrong-mission' })
+  const wrongMissionResponse = await handleMcp(wrongMissionRequest, env, principal)
+  assert.equal((await wrongMissionResponse.json()).error.data.code, 'MISSION_MISSION_ID_SCOPE_DENIED')
+
+  const progressRequest = mcpRequest(issued.secret, {
+    jsonrpc: '2.0',
+    id: 3,
+    method: 'tools/call',
+    params: {
+      name: 'mission_task_progress_append',
+      arguments: {
+        project_id: baseInput.project_id,
         expected_version: 7,
         event: {
           event_id: '66666666-6666-6666-6666-666666666666',
@@ -816,15 +836,73 @@ test('bounded MCP progress and result use the live Mission lease then terminally
   assert.equal(progress.result.structuredContent.ok, true)
   assert.equal(progress.result.structuredContent.result.version, 8)
 
-  const resultRequest = mcpRequest(issued.secret, {
+  const deliveryOperationId = '77777777-7777-7777-7777-777777777777'
+  const deliveryCommitSha = '8888888888888888888888888888888888888888'
+  await approvalStorage.put(`operation:${deliveryOperationId}`, {
+    operation_id: deliveryOperationId,
+    project_id: baseInput.project_id,
+    repository: { owner: 'enkhbat194', repo: 'best-code-ide', full_name: 'enkhbat194/best-code-ide' },
+    branch: baseInput.branch,
+    title: 'Bounded write smoke delivery',
+    summary: 'Approved bounded write delivery',
+    status: 'pull_request_opened',
+    approval_required: true,
+    risk: 'normal',
+    risk_reasons: [],
+    changes: [{
+      action: 'create',
+      path: 'docs/smoke/chat11.md',
+      base_sha: null,
+      base_content: null,
+      proposed_content: '# smoke\n',
+      proposed_sha256: '9'.repeat(64),
+      diff: 'safe diff',
+    }],
+    created_at: '2026-07-24T00:00:00.000Z',
+    updated_at: '2026-07-24T00:00:00.000Z',
+    expires_at: '2099-01-01T00:00:00.000Z',
+    prepared_commit_sha: deliveryCommitSha,
+    pr_number: 91,
+  })
+
+  const missingDeliveryRequest = mcpRequest(issued.secret, {
     jsonrpc: '2.0',
-    id: 3,
+    id: 4,
     method: 'tools/call',
     params: {
       name: 'mission_task_result_submit',
       arguments: {
         project_id: baseInput.project_id,
         expected_version: 8,
+        result: {
+          summary: 'Unverified result',
+          completed_work: ['Claimed completion'],
+          changed_files: ['docs/smoke/chat11.md'],
+          test_results: ['claimed test'],
+          evidence_references: ['claimed evidence'],
+          unresolved_issues: [],
+          deviations: [],
+          decisions_required: [],
+          suggested_next_action: 'Do not accept',
+        },
+      },
+    },
+  }, undefined, { 'Idempotency-Key': 'bounded-result-unverified' })
+  const missingDeliveryResponse = await handleMcp(missingDeliveryRequest, env, principal)
+  assert.equal((await missingDeliveryResponse.json()).error.data.code, 'RESULT_DELIVERY_EVIDENCE_REQUIRED')
+
+  const resultRequest = mcpRequest(issued.secret, {
+    jsonrpc: '2.0',
+    id: 5,
+    method: 'tools/call',
+    params: {
+      name: 'mission_task_result_submit',
+      arguments: {
+        project_id: baseInput.project_id,
+        expected_version: 8,
+        delivery_operation_id: deliveryOperationId,
+        expected_commit_sha: deliveryCommitSha,
+        draft_pr_number: 91,
         result: {
           summary: 'Bounded write task completed',
           completed_work: ['Created the approved branch and bounded change'],
@@ -847,7 +925,7 @@ test('bounded MCP progress and result use the live Mission lease then terminally
   const revoked = await boundedWriteCredentialGet(env, issued.credential.credential_id)
   assert.equal(revoked.status, 'revoked')
   const reauthentication = await authenticateRequest(
-    mcpRequest(issued.secret, { jsonrpc: '2.0', id: 4, method: 'ping' }),
+    mcpRequest(issued.secret, { jsonrpc: '2.0', id: 6, method: 'ping' }),
     env,
   )
   assert.equal(reauthentication.principal, null)

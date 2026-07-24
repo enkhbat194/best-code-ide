@@ -1,0 +1,114 @@
+name: Chat 11 Bounded Write Production Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_bounded_write_smoke:
+        description: Type RUN-CHAT11-BOUNDED-WRITE-SMOKE to approve isolated production mutations and cleanup
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+
+concurrency:
+  group: bestcode-chat11-bounded-write-production-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    name: Verify the task-bound MCP write path
+    if: ${{ inputs.confirm_bounded_write_smoke == 'RUN-CHAT11-BOUNDED-WRITE-SMOKE' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    env:
+      BESTCODE_BACKEND_URL: https://best-code-ide.enkhbat194.workers.dev
+      BESTCODE_PRODUCTION_WORKERS: >-
+        [{"name":"best-code-ide","root_directory":"backend"},{"name":"best-code-ide-appl","root_directory":"frontend"}]
+    steps:
+      - name: Enforce approved production source
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "::error::Chat 11 bounded-write smoke must run from refs/heads/main; got $GITHUB_REF"
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Test bounded-write smoke controller and redaction
+        run: node --test scripts/chat11-bounded-write-production-smoke.test.mjs
+      - name: Require protected production secrets
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          BESTCODE_AUTH_TOKEN: ${{ secrets.BESTCODE_AUTH_TOKEN }}
+        run: |
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID BESTCODE_AUTH_TOKEN; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::GitHub environment production is missing $name or environment access."
+              exit 1
+            fi
+          done
+      - name: Require exact main deployment and 100 percent traffic
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: >-
+          node scripts/cloudflare-release-integrity.mjs
+          --repository "$GITHUB_REPOSITORY"
+          --branch main
+          --expected-sha "$GITHUB_SHA"
+          --repair-preview-triggers false
+          --wait-seconds 900
+          --poll-seconds 20
+          --output artifacts/chat11-bounded-write-release-integrity.json
+      - name: Run isolated owner-approved bounded-write connector smoke
+        env:
+          BESTCODE_AUTH_TOKEN: ${{ secrets.BESTCODE_AUTH_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          node scripts/chat11-bounded-write-production-smoke.mjs
+          --backend-url "$BESTCODE_BACKEND_URL"
+          --repository "$GITHUB_REPOSITORY"
+          --expected-sha "$GITHUB_SHA"
+          --run-key "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          --output artifacts/chat11-bounded-write-production-smoke.json
+      - name: Scan immutable evidence for secret leaks
+        if: always()
+        shell: bash
+        env:
+          BESTCODE_AUTH_TOKEN: ${{ secrets.BESTCODE_AUTH_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          if [[ ! -f artifacts/chat11-bounded-write-production-smoke.json ]]; then
+            echo "::error::Chat 11 bounded-write smoke evidence was not produced."
+            exit 1
+          fi
+          node -e "
+            const fs = require('node:fs');
+            const raw = fs.readFileSync('artifacts/chat11-bounded-write-production-smoke.json', 'utf8');
+            const owner = process.env.BESTCODE_AUTH_TOKEN || '';
+            const github = process.env.GITHUB_TOKEN || '';
+            if ((owner && raw.includes(owner)) || (github && raw.includes(github))) process.exit(1);
+            if (/bcwrite_v1\\./i.test(raw) || /authorization/i.test(raw) || /bearer\\s/i.test(raw)) process.exit(1);
+            const evidence = JSON.parse(raw);
+            if (evidence.security.secret_value_persisted !== false) process.exit(1);
+            if (evidence.security.sensitive_header_persisted !== false) process.exit(1);
+            if (evidence.security.old_agent_branches_touched !== false) process.exit(1);
+          "
+      - name: Upload redacted immutable evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat11-bounded-write-production-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/chat11-bounded-write-release-integrity.json
+            artifacts/chat11-bounded-write-production-smoke.json
+          if-no-files-found: warn
+          retention-days: 30

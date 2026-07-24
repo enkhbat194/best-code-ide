@@ -162,6 +162,11 @@ function validIdempotencyKey(value: string): boolean {
   return /^[A-Za-z0-9._:-]{16,128}$/.test(value)
 }
 
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
+  return [...new Uint8Array(digest)].map((item) => item.toString(16).padStart(2, '0')).join('')
+}
+
 function isExpired(operation: ApprovalOperation): boolean {
   return operation.status === 'pending_approval' && Date.parse(operation.expires_at) <= Date.now()
 }
@@ -421,6 +426,49 @@ export class ApprovalStore {
       if (!operation) return json({ error: 'Operation not found' }, 404)
 
       if (request.method === 'GET' && segments.length === 2) return json(operation)
+
+      if (request.method === 'POST' && segments[2] === 'amend') {
+        if (operation.status !== 'pending_approval') {
+          return json({ error: `Operation cannot be amended from status ${operation.status}`, operation }, 409)
+        }
+        if (operation.changes.length !== 1 || operation.changes[0].action === 'delete') {
+          return json({ error: 'Only one pending create/update change may be amended' }, 409)
+        }
+        const body = (await request.json().catch(() => null)) as {
+          proposed_content?: string
+          proposed_sha256?: string
+          diff?: string
+        } | null
+        if (
+          typeof body?.proposed_content !== 'string' ||
+          body.proposed_content.length > 500_000 ||
+          typeof body.proposed_sha256 !== 'string' ||
+          !/^[a-f0-9]{64}$/.test(body.proposed_sha256) ||
+          typeof body.diff !== 'string' ||
+          !body.diff ||
+          body.diff.length > 1_000_000
+        ) {
+          return json({ error: 'A bounded amended content, SHA-256, and diff are required' }, 400)
+        }
+        if (await sha256Hex(body.proposed_content) !== body.proposed_sha256) {
+          return json({ error: 'Amended proposed content hash mismatch' }, 409)
+        }
+        const current = operation.changes[0]
+        if (current.proposed_sha256 === body.proposed_sha256) return json(operation)
+        const now = new Date().toISOString()
+        const updated: ApprovalOperation = {
+          ...operation,
+          updated_at: now,
+          changes: [{
+            ...current,
+            proposed_content: body.proposed_content,
+            proposed_sha256: body.proposed_sha256,
+            diff: body.diff,
+          }],
+        }
+        await this.state.storage.put(operationKey(operationId), updated)
+        return json(updated)
+      }
 
       if (request.method === 'POST' && segments[2] === 'decision') {
         const body = (await request.json().catch(() => null)) as DecisionRequest | null

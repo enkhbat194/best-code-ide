@@ -65,3 +65,19 @@ GitHub repository `enkhbat194/best-code-ide` доторх `docs/HANDOFF_CURRENT.
 - Full backend suite passed every product check; the only local failure remains the pre-existing Windows-only `typecheckPipeline.test.mjs` harness because `bash` is unavailable and its child exit code is `null`. Backend TypeScript typecheck passed.
 - Frontend lint passed with one pre-existing `no-control-regex` warning; production build passed. The existing lockfile audit reports one high-severity transitive dependency and was not mutated by this package.
 - Package C diff/security review is complete. Next: Package D protected production smoke workflow, connector/owner-visible contract closeout, PR/CI, and production verification.
+
+## Chat 11 Package D implementation checkpoint
+
+- Package D continues on `agent/chat11-bounded-write-agent` after the pushed Package C commit `ce1f5aa146449d7ee749bd2ea08344ddb1f7aec7`.
+- A pending one-file approval operation can now be amended on the same path before the owner decision. The final consolidated diff and SHA-256 content hash remain the only approved delivery input.
+- Commit, push, and draft-PR delivery revalidate the credential-bound branch. Mission mutation claims supplied by an agent must exactly match the authoritative Mission/task/attempt/lease/fencing binding.
+- Bounded task completion now requires authoritative approval-operation, commit, draft-PR, exact changed-file, build-success, test-success, and evidence references before the Mission Durable Object accepts the result.
+- Added the manual, `production`-environment-protected `.github/workflows/chat11-bounded-write-production-smoke.yml`.
+- The smoke uses the real MCP protocol and `subscription-write-bounded-v1` against project `bestcode`. It creates one isolated Mission/task, uses an exact `agent/chat11-smoke-*` branch and one `docs/smoke/**` file, stages create+patch into one owner-approved operation, prepares one commit, pushes once, runs configured build/test workflows, and opens one draft PR.
+- Live fail-closed checks cover wrong project, main/wrong branch, outside/protected path, wrong Mission, stale fencing token, second commit, second PR, and unavailable merge/deploy/rollback authority.
+- Cleanup revokes the exact credential, closes the exact draft PR, deletes only the exact smoke branch, cancels the synthetic execution/Mission, and records that old `agent/` branches were untouched.
+- The workflow runs only from deployed `main`, first requires exact Cloudflare production SHA and 100% traffic, never persists the one-time credential, scans immutable evidence for credential/header leaks, and uploads redacted evidence.
+- Local controller contract tests: 4 passed. Focused approval/bounded/delivery/schema integration tests: 34 passed. Backend TypeScript typecheck passed.
+- Full backend suite: 205 tests, 204 passed. The only failure remains the pre-existing Windows-only `typecheckPipeline.test.mjs` harness because local `bash` is unavailable (`exitCode: null`, Linux expected: `23`).
+- Frontend lint passed with the one pre-existing `no-control-regex` warning; production build passed.
+- GitHub PR/CI, merge, exact-SHA deployment, and the protected production smoke execution remain the next release gates.

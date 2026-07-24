@@ -26,6 +26,17 @@ export async function getApproval(env: Env, operationId: string): Promise<Approv
   return request<ApprovalOperation>(env, `/operations/${encodeURIComponent(operationId)}`)
 }
 
+export async function amendApproval(
+  env: Env,
+  operationId: string,
+  input: { proposed_content: string; proposed_sha256: string; diff: string },
+): Promise<ApprovalOperation> {
+  return request<ApprovalOperation>(env, `/operations/${encodeURIComponent(operationId)}/amend`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+}
+
 export async function listApprovals(
   env: Env,
   filters: { status?: string; projectId?: string; limit?: number } = {},

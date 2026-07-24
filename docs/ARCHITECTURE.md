@@ -410,3 +410,25 @@ Metrics нь privacy-safe, project-scoped байна. Model chain-of-thought х�
 8. External content instruction биш.
 9. Personal, project, world data boundary тусдаа.
 10. Canonical data open export-тай.
+
+## 11. Chat 11 bounded-write production proof
+
+The protected smoke is a release proof, not a second write authority:
+
+```text
+exact deployed main SHA + 100% traffic
+→ isolated Mission/task + active lease/fencing token
+→ explicit owner write-task gate
+→ one-time task-bound MCP credential
+→ exact smoke branch + docs/smoke/** create/patch
+→ owner approval of one consolidated final diff
+→ one commit + one push + successful build/test + one draft PR
+→ authoritative Mission result
+→ automatic revoke/lease release
+→ close exact PR + delete exact smoke branch + cancel synthetic Mission
+```
+
+The controller cannot merge, deploy, rollback, decide its own approval, access secrets, widen
+project/Mission/task/branch/path scope, or touch historical `agent/` branches. Result submission is
+accepted only when durable delivery state proves the exact operation, commit, draft PR, changed
+file set, and successful configured build/test tasks.

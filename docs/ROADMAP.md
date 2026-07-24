@@ -546,3 +546,15 @@ contract → branch → implementation → tests/review
 - owner outcome dogfood дээр батлагдаагүй;
 - зардлын cap тодорхойгүй;
 - safety-critical gate тойрогдсон.
+
+## Chat 11 bounded-write release gates
+
+- [x] Task/attempt/lease/fencing/agent/provider/branch/base/tool/path/limit-bound one-time credential.
+- [x] Owner write-task gate and final consolidated-diff approval remain separate authorities.
+- [x] Same-file create+patch can produce one approved operation and one changed file.
+- [x] Mission result requires durable commit, draft PR, exact changed files, and successful build/test evidence.
+- [x] Manual production-environment smoke controller and redacted evidence contract.
+- [ ] Merge the Package D PR only after required GitHub checks and security review pass.
+- [ ] Deploy the exact merged `main` SHA and verify 100% backend/PWA production traffic.
+- [ ] Run the protected Chat 11 bounded-write smoke from `main`; retain its immutable redacted artifact.
+- [ ] Closeout the production Mission/PR/branch evidence and update canonical status with the exact SHA/run URLs.

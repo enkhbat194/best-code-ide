@@ -2,6 +2,7 @@ import { persistSecurityAudit } from './securityAudit'
 import { authorizeBoundedWriteOperation } from './boundedWriteCredentials'
 import { normalizeBoundedRepositoryPath, scanBoundedWriteContent } from './boundedWriteSafety'
 import * as gh from './github'
+import { getApproval, listTasks } from './approvalClient'
 import { getProject } from './projects'
 import type { RequestPrincipal } from './subscriptionCredentialTypes'
 import {
@@ -217,11 +218,24 @@ function boundedWriteArguments(
     args.expected_old_hash = raw.expected_old_hash.toLowerCase()
   }
   if (name === 'build_start' || name === 'test_start') args.branch = principal.branch
+  if (name === 'repository_commit' || name === 'repository_push' || name === 'repository_create_pull_request') {
+    args.expected_branch = principal.branch
+  }
   if (name === 'repository_create_pull_request') {
     args.base = 'main'
     args.draft = true
   }
   if (name.startsWith('mission_')) {
+    const exactBindings: Array<[string, string | number]> = [
+      ['mission_id', principal.mission_id],
+      ['task_id', principal.task_id],
+      ['attempt_id', principal.attempt_id],
+      ['lease_id', principal.lease_id],
+      ['fencing_token', principal.fencing_token],
+    ]
+    for (const [key, authoritative] of exactBindings) {
+      if (raw[key] !== undefined && raw[key] !== authoritative) throw new Error(`MISSION_${key.toUpperCase()}_SCOPE_DENIED`)
+    }
     args.mission_id = principal.mission_id
     args.task_id = principal.task_id
     args.attempt_id = principal.attempt_id
@@ -255,9 +269,10 @@ const BOUNDED_SOURCE_LOCKED_MUTATIONS = new Set([
 
 function boundedOperationCost(name: string, args: Record<string, unknown>) {
   const changed = name === 'repository_write_file' || name === 'repository_apply_patch'
+  const amendsPendingFile = name === 'repository_apply_patch' && typeof args.operation_id === 'string'
   const content = typeof args.content === 'string' ? args.content : typeof args.patch === 'string' ? args.patch : ''
   return {
-    changed_files: changed ? 1 : 0,
+    changed_files: changed && !amendsPendingFile ? 1 : 0,
     changed_bytes: changed ? new TextEncoder().encode(content).byteLength : 0,
     commits: name === 'repository_commit' ? 1 : 0,
     pushes: name === 'repository_push' ? 1 : 0,
@@ -274,6 +289,60 @@ async function assertBoundedSourceLock(
   const source = await gh.getBranch(token, project.owner, project.repo, project.defaultBranch)
   if (!source || source.sha.toLowerCase() !== principal.base_sha.toLowerCase()) {
     throw new Error('STALE_BASE_SHA_DENIED')
+  }
+}
+
+async function assertBoundedResultEvidence(
+  env: Env,
+  principal: Extract<RequestPrincipal, { kind: 'bounded-write' }>,
+  args: Record<string, unknown>,
+): Promise<void> {
+  const operationId = typeof args.delivery_operation_id === 'string' ? args.delivery_operation_id.trim() : ''
+  const expectedCommit = typeof args.expected_commit_sha === 'string' ? args.expected_commit_sha.trim().toLowerCase() : ''
+  const expectedPr = Number(args.draft_pr_number)
+  if (!operationId || !/^[a-f0-9]{40,64}$/.test(expectedCommit) || !Number.isSafeInteger(expectedPr) || expectedPr < 1) {
+    throw new Error('RESULT_DELIVERY_EVIDENCE_REQUIRED')
+  }
+  const operation = await getApproval(env, operationId)
+  if (
+    operation.project_id !== principal.project_id ||
+    operation.branch !== principal.branch ||
+    operation.status !== 'pull_request_opened' ||
+    operation.prepared_commit_sha?.toLowerCase() !== expectedCommit ||
+    operation.pr_number !== expectedPr
+  ) {
+    throw new Error('RESULT_DELIVERY_EVIDENCE_MISMATCH')
+  }
+  const changedPaths = operation.changes.map((change) => change.path).sort()
+  if (
+    changedPaths.length === 0 ||
+    changedPaths.some((path) =>
+      principal.denied_paths.some((pattern) => globMatches(pattern, path)) ||
+      !principal.allowed_paths.some((pattern) => globMatches(pattern, path)))
+  ) {
+    throw new Error('RESULT_CHANGED_FILE_SCOPE_DENIED')
+  }
+  const result = args.result as Record<string, unknown> | undefined
+  const resultPaths = Array.isArray(result?.changed_files)
+    ? result.changed_files.filter((path): path is string => typeof path === 'string').sort()
+    : []
+  if (resultPaths.length !== changedPaths.length || resultPaths.some((path, index) => path !== changedPaths[index])) {
+    throw new Error('RESULT_CHANGED_FILES_MISMATCH')
+  }
+  if (!Array.isArray(result?.test_results) || result.test_results.length === 0) {
+    throw new Error('RESULT_TEST_EVIDENCE_REQUIRED')
+  }
+  if (!Array.isArray(result?.evidence_references) || result.evidence_references.length === 0) {
+    throw new Error('RESULT_EVIDENCE_REFERENCE_REQUIRED')
+  }
+  const project = getProject(env, principal.project_id)
+  const tasks = await listTasks(env, { projectId: principal.project_id, operationId, limit: 100 })
+  for (const [kind, configured] of [['build', project.buildWorkflow], ['test', project.testWorkflow]] as const) {
+    if (!configured) continue
+    const task = tasks.items.find((item) => item.kind === kind && item.branch === principal.branch)
+    if (!task || task.status !== 'completed' || task.conclusion !== 'success') {
+      throw new Error(`RESULT_${kind.toUpperCase()}_NOT_SUCCESSFUL`)
+    }
   }
 }
 
@@ -419,6 +488,15 @@ export async function handleMcp(
           return rpcError(message.id, -32001, 'Request is outside credential scope', 403, {
             code,
           })
+        }
+        if (name === 'mission_task_result_submit') {
+          try {
+            await assertBoundedResultEvidence(env, principal, effectiveArgs)
+          } catch (error) {
+            const code = error instanceof Error ? error.message : 'RESULT_EVIDENCE_DENIED'
+            await persistBoundedDenial(env, effectiveRequest, principal, name, code, context.request_id)
+            return rpcError(message.id, -32001, 'Bounded task result lacks authoritative delivery evidence', 409, { code })
+          }
         }
         const contentScan = scanBoundedWriteContent(name, effectiveArgs)
         if (contentScan.scanned) {

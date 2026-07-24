@@ -1,5 +1,5 @@
 import * as gh from './github'
-import { createApproval, getApproval, listApprovals, markCompleted, markSuperseded } from './approvalClient'
+import { amendApproval, createApproval, getApproval, listApprovals, markCompleted, markSuperseded } from './approvalClient'
 import type { ApprovalOperation, RiskLevel, StagedChange } from './approvalStore'
 import { createUnifiedDiff, applyUnifiedPatch } from './patch'
 import { getProject, type ProjectConfig } from './projects'
@@ -74,6 +74,8 @@ export const safeWriteMcpTools = [
         branch: { type: 'string' },
         path: { type: 'string' },
         content: { type: 'string', maxLength: MAX_FILE_CHARS },
+        expected_branch_head_sha: { type: 'string', pattern: '^[a-fA-F0-9]{40,64}$', description: 'Required by bounded-write credentials.' },
+        expected_old_hash: { type: 'string', pattern: '^(?:absent|[a-fA-F0-9]{40,64})$', description: 'Required by bounded-write credentials.' },
         title: { type: 'string' },
         summary: { type: 'string' },
       },
@@ -93,6 +95,9 @@ export const safeWriteMcpTools = [
         branch: { type: 'string' },
         path: { type: 'string' },
         patch: { type: 'string', maxLength: 250000 },
+        operation_id: { type: 'string', description: 'Optional pending same-file operation to amend before owner approval.' },
+        expected_branch_head_sha: { type: 'string', pattern: '^[a-fA-F0-9]{40,64}$', description: 'Required by bounded-write credentials.' },
+        expected_old_hash: { type: 'string', pattern: '^(?:absent|[a-fA-F0-9]{40,64})$', description: 'Required by bounded-write credentials.' },
         title: { type: 'string' },
         summary: { type: 'string' },
       },
@@ -644,6 +649,56 @@ export async function executeSafeWriteMcpTool(
       const existing = await gh.getFile(token, project.owner, project.repo, path, branch)
       if (typeof args.expected_old_hash === 'string' && args.expected_old_hash !== (existing?.sha ?? 'absent')) {
         throw new Error(`BASE_CONFLICT: ${path} does not match expected old hash`)
+      }
+      const pendingOperationId = typeof args.operation_id === 'string' ? args.operation_id.trim() : ''
+      if (pendingOperationId) {
+        const operation = await getApproval(env, pendingOperationId)
+        assertOperationProject(operation, project.id)
+        if (operation.status !== 'pending_approval') {
+          throw new Error(`INVALID_OPERATION_STATE: operation cannot be amended from ${operation.status}`)
+        }
+        if (
+          operation.branch !== branch ||
+          operation.base_context_sha !== args.expected_branch_head_sha ||
+          operation.changes.length !== 1 ||
+          operation.changes[0].path !== path ||
+          operation.changes[0].action === 'delete' ||
+          operation.changes[0].proposed_content === null
+        ) {
+          throw new Error('OPERATION_SCOPE_MISMATCH: patch must amend the exact pending same-file operation')
+        }
+        const staged = operation.changes[0]
+        if (staged.proposed_content === null) throw new Error('OPERATION_SCOPE_MISMATCH: staged content is unavailable')
+        if (
+          (staged.action === 'create' && existing) ||
+          (staged.action === 'update' && (!existing || existing.sha !== staged.base_sha))
+        ) {
+          throw new Error(`BASE_CONFLICT: ${path} changed after the operation was staged`)
+        }
+        const applied = applyUnifiedPatch(staged.proposed_content, patch, path)
+        if (applied.content === staged.proposed_content) throw new Error('INVALID_ARGUMENT: patch produces no content change')
+        const proposedSha256 = await sha256Hex(applied.content)
+        const updated = await amendApproval(env, operation.operation_id, {
+          proposed_content: applied.content,
+          proposed_sha256: proposedSha256,
+          diff: createUnifiedDiff(path, staged.base_content, applied.content),
+        })
+        return finish({
+          ok: true,
+          operation_id: updated.operation_id,
+          status: updated.status,
+          project_id: project.id,
+          repository: repoFields(project),
+          branch,
+          approval_required: true,
+          result: {
+            amended: true,
+            path,
+            proposed_sha256: proposedSha256,
+            diff: updated.changes[0].diff,
+            next_action: 'The owner must approve the amended final diff before repository_commit.',
+          },
+        })
       }
       if (!existing) throw new Error(`File not found: ${path}`)
       const applied = applyUnifiedPatch(existing.content, patch, path)

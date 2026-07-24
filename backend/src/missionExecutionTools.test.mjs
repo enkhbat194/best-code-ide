@@ -18,6 +18,17 @@ test('Mission execution publishes the complete provider-neutral operation contra
   assert.ok(missionExecutionOwnerTools.every((tool) => tool.annotations.destructiveHint))
 })
 
+test('Mission result schema advertises bounded delivery evidence without making it mandatory for non-repository tasks', () => {
+  const tool = missionExecutionMcpTools.find((item) => item.name === 'mission_task_result_submit')
+  assert.ok(tool)
+  assert.match(tool.inputSchema.properties.delivery_operation_id.pattern, /a-f/)
+  assert.match(tool.inputSchema.properties.expected_commit_sha.pattern, /40,64/)
+  assert.equal(tool.inputSchema.properties.draft_pr_number.minimum, 1)
+  assert.ok(!tool.inputSchema.required.includes('delivery_operation_id'))
+  assert.ok(!tool.inputSchema.required.includes('expected_commit_sha'))
+  assert.ok(!tool.inputSchema.required.includes('draft_pr_number'))
+})
+
 test('legacy owner MCP advertises execution contracts while subscription profile stays exact read-only v1', () => {
   const legacy = new Set(gatewayTools('legacy').map((tool) => tool.name))
   for (const tool of missionExecutionMcpTools) assert.ok(legacy.has(tool.name))

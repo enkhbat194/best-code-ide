@@ -238,6 +238,12 @@ function assertProject(operation: ApprovalOperation, project: ProjectConfig): vo
   if (operation.project_id !== project.id) throw new Error('Operation not found for this project')
 }
 
+function assertExpectedBranch(operation: ApprovalOperation, expected: unknown): void {
+  if (typeof expected === 'string' && operation.branch !== expected) {
+    throw new Error('BRANCH_SCOPE_DENIED: operation is outside the credential-bound branch')
+  }
+}
+
 function assertWorkingBranch(branch: string): void {
   if (branch === 'main' || branch === 'master') throw new Error('PROTECTED_BRANCH: delivery to main/master is blocked')
 }
@@ -344,6 +350,9 @@ async function startWorkflowTask(
     task_id: crypto.randomUUID(),
     kind,
     project_id: project.id,
+    ...(typeof operationId === 'string' && operationId.trim()
+      ? { operation_id: operationId.trim() }
+      : {}),
     repository: repo(project),
     branch,
     workflow,
@@ -395,6 +404,7 @@ export async function executeDeliveryMcpTool(
     if (name === 'repository_commit') {
       const operation = await getApproval(env, requireString(args, 'operation_id'))
       assertProject(operation, project)
+      assertExpectedBranch(operation, args.expected_branch)
       assertWorkingBranch(operation.branch)
       if (operation.status !== 'approved') throw new Error(`Operation must be approved; current status is ${operation.status}`)
       try {
@@ -442,6 +452,7 @@ export async function executeDeliveryMcpTool(
     if (name === 'repository_push') {
       const operation = await getApproval(env, requireString(args, 'operation_id'))
       assertProject(operation, project)
+      assertExpectedBranch(operation, args.expected_branch)
       assertWorkingBranch(operation.branch)
       if (operation.status !== 'commit_prepared' || !operation.prepared_commit_sha || !operation.parent_sha) {
         throw new Error(`Operation must be in status commit_prepared; current status is ${operation.status}`)
@@ -474,6 +485,7 @@ export async function executeDeliveryMcpTool(
     if (name === 'repository_create_pull_request') {
       const operation = await getApproval(env, requireString(args, 'operation_id'))
       assertProject(operation, project)
+      assertExpectedBranch(operation, args.expected_branch)
       if (operation.status !== 'pushed') throw new Error(`Operation must be pushed; current status is ${operation.status}`)
       await assertSuccessfulTasks(env, project, operation)
       const base = typeof args.base === 'string' && args.base.trim() ? args.base.trim() : project.defaultBranch
