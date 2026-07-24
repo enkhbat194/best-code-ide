@@ -151,4 +151,3 @@ export function assertExecutionPlan(plan: ExecutionPlan, tasks: ExecutionTask[])
   if (plan.task_ids.some((id) => !tasks.some((task) => task.task_id === id))) throw new Error('Execution plan references a missing task')
   assertExecutionGraph(plan.mission_id, tasks)
 }
-
