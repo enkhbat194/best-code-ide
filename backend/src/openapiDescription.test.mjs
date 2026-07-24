@@ -26,16 +26,16 @@ test('action descriptions are normalized and bounded below the GPT limit', () =>
   )
 
   assert.ok(Array.from(result).length <= ACTION_DESCRIPTION_LIMIT)
-  assert.ok(result.endsWith('â€¦'))
+  assert.ok(result.endsWith('…'))
   assert.doesNotMatch(result, /\s{2,}/u)
 })
 
 test('description truncation does not split a Unicode code point', () => {
-  const result = buildActionDescription('AðŸ˜€BC', '', 3)
+  const result = buildActionDescription('A😀BC', '', 3)
 
-  assert.equal(result, 'AðŸ˜€â€¦')
+  assert.equal(result, 'A😀…')
   assert.equal(Array.from(result).length, 3)
-  assert.deepEqual(Array.from(result), ['A', 'ðŸ˜€', 'â€¦'])
+  assert.deepEqual(Array.from(result), ['A', '😀', '…'])
 })
 
 test('every generated OpenAPI action uses a bounded description', () => {
@@ -71,4 +71,3 @@ test('invalid limits fail closed', () => {
   assert.throws(() => buildActionDescription('x', 'y', 0), RangeError)
   assert.throws(() => buildActionDescription('x', 'y', 1.5), RangeError)
 })
-
