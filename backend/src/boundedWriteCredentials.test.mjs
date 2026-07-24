@@ -7,6 +7,7 @@ import {
   boundedWriteCredentialRevoke,
   boundedWriteScopeHash,
   authorizeBoundedWriteOperation,
+  authenticateBoundedWriteCredential,
 } from './boundedWriteCredentials.ts'
 import { authenticateRequest } from './authentication.ts'
 import { handleMcp } from './mcp.ts'
@@ -22,6 +23,7 @@ import { issueApprovedBoundedWriteCredential } from './boundedWriteCredentials.t
 import { handleBoundedWriteCredentialApi } from './boundedWriteCredentialApi.ts'
 import { commandMissionExecution } from './missionExecutionStore.ts'
 import { boundedWriteOpenapiSpec } from './boundedWriteOpenapi.ts'
+import { handleMissionApi } from './missionApi.ts'
 import { subscriptionToolNames } from './subscriptionTools.ts'
 
 class MemoryStorage {
@@ -131,7 +133,7 @@ async function seedApprovedMission(approvalStorage, overrides = {}) {
   return state
 }
 
-function mcpRequest(secret, body, path = '/mcp/subscription?project_id=bestcode') {
+function mcpRequest(secret, body, path = '/mcp/subscription?project_id=bestcode', extraHeaders = {}) {
   return new Request(`https://bestcode.example${path}`, {
     method: 'POST',
     headers: {
@@ -141,9 +143,24 @@ function mcpRequest(secret, body, path = '/mcp/subscription?project_id=bestcode'
       'MCP-Protocol-Version': '2025-11-25',
       'X-BestCode-Agent-Id': 'spoofed-agent',
       'X-BestCode-Agent-Provider': 'spoofed-provider',
+      ...extraHeaders,
     },
     body: JSON.stringify(body),
   })
+}
+
+async function createMissionRecord(env) {
+  const request = new Request('https://bestcode.example/api/missions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      mission_id: baseInput.mission_id,
+      project_id: baseInput.project_id,
+      title: 'Chat 11 bounded write integration',
+    }),
+  })
+  const response = await handleMissionApi(request, env, new URL(request.url))
+  assert.equal(response.status, 201)
 }
 
 const baseInput = {
@@ -336,7 +353,7 @@ test('bounded MCP rejects tool, branch, project, and path widening before execut
 })
 
 test('operation accounting is atomic, idempotent, and fails closed at every limit', async () => {
-  const { env, approvalStorage } = environment()
+  const { env, approvalStorage, storage } = environment()
   await seedApprovedMission(approvalStorage)
   const issued = await boundedWriteCredentialCreate(env, {
     ...baseInput,
@@ -390,6 +407,33 @@ test('operation accounting is atomic, idempotent, and fails closed at every limi
     }),
     /TOOL_SCOPE_DENIED/,
   )
+  const auditEvents = [...storage.values.values()].filter((value) => value?.event)
+  assert.ok(auditEvents.some((event) => event.event === 'bounded_write_operation_authorized'))
+  assert.ok(auditEvents.some((event) => event.event === 'bounded_write_operation_replayed'))
+  assert.ok(auditEvents.some((event) =>
+    event.event === 'bounded_write_operation_denied' &&
+    event.details.denial_code === 'OPERATION_LIMIT_EXCEEDED'))
+  assert.equal(JSON.stringify(auditEvents).includes(issued.secret), false)
+})
+
+test('expired bounded credential fails authentication and records safe expiry audit', async () => {
+  const { env, storage } = environment()
+  const issued = await boundedWriteCredentialCreate(
+    env,
+    { ...baseInput, expires_in_seconds: 300 },
+    '2026-07-24T00:00:00.000Z',
+  )
+  const authenticated = await authenticateBoundedWriteCredential(env, issued.secret, {
+    endpoint: '/mcp/subscription',
+    project_id: baseInput.project_id,
+    now: '2026-07-24T00:05:00.000Z',
+  })
+  assert.equal(authenticated, null)
+  const auditEvents = [...storage.values.values()].filter((value) => value?.event)
+  assert.ok(auditEvents.some((event) =>
+    event.event === 'bounded_write_credential_expired' &&
+    event.details.credential_id === issued.credential.credential_id))
+  assert.equal(JSON.stringify(auditEvents).includes(issued.secret), false)
 })
 
 test('branch creation checks the approved base SHA before creating a ref', async (t) => {
@@ -559,4 +603,90 @@ test('bounded write owner OpenAPI is separate, owner-authenticated, and descript
   for (const operation of operations) {
     assert.doesNotMatch(operation.operationId, /(?:^|_)(merge|deploy|rollback)(?:_|$)/)
   }
+})
+
+test('bounded MCP progress and result use the live Mission lease then terminally revoke the credential', async () => {
+  const { env, approvalStorage, storage } = environment()
+  await createMissionRecord(env)
+  await seedApprovedMission(approvalStorage)
+  const allowedTools = [
+    ...baseInput.allowed_tools,
+    'mission_task_progress_append',
+    'mission_task_result_submit',
+    'mission_task_lease_release',
+  ]
+  const issued = await issueApprovedBoundedWriteCredential(env, { ...baseInput, allowed_tools: allowedTools })
+  const principal = (await authenticateRequest(
+    mcpRequest(issued.secret, { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} }),
+    env,
+  )).principal
+  assert.equal(principal?.kind, 'bounded-write')
+
+  const progressRequest = mcpRequest(issued.secret, {
+    jsonrpc: '2.0',
+    id: 2,
+    method: 'tools/call',
+    params: {
+      name: 'mission_task_progress_append',
+      arguments: {
+        project_id: baseInput.project_id,
+        mission_id: 'spoofed-mission',
+        task_id: 'spoofed-task',
+        lease_id: 'spoofed-lease',
+        fencing_token: 999,
+        expected_version: 7,
+        event: {
+          event_id: '66666666-6666-6666-6666-666666666666',
+          kind: 'tests_running',
+          message: 'Running approved tests',
+        },
+      },
+    },
+  }, undefined, { 'Idempotency-Key': 'bounded-progress-0001' })
+  const progressResponse = await handleMcp(progressRequest, env, principal)
+  const progress = await progressResponse.json()
+  assert.equal(progress.result.structuredContent.ok, true)
+  assert.equal(progress.result.structuredContent.result.version, 8)
+
+  const resultRequest = mcpRequest(issued.secret, {
+    jsonrpc: '2.0',
+    id: 3,
+    method: 'tools/call',
+    params: {
+      name: 'mission_task_result_submit',
+      arguments: {
+        project_id: baseInput.project_id,
+        expected_version: 8,
+        result: {
+          summary: 'Bounded write task completed',
+          completed_work: ['Created the approved branch and bounded change'],
+          changed_files: ['docs/smoke/chat11.md'],
+          test_results: ['approved smoke passed'],
+          evidence_references: ['evidence:chat11-bounded'],
+          unresolved_issues: [],
+          deviations: [],
+          decisions_required: [],
+          suggested_next_action: 'Owner review the draft PR',
+        },
+      },
+    },
+  }, undefined, { 'Idempotency-Key': 'bounded-result-000001' })
+  const resultResponse = await handleMcp(resultRequest, env, principal)
+  const result = await resultResponse.json()
+  assert.equal(result.result.structuredContent.ok, true)
+  assert.equal(result.result.structuredContent.result.execution.task_counts.succeeded, 1)
+
+  const revoked = await boundedWriteCredentialGet(env, issued.credential.credential_id)
+  assert.equal(revoked.status, 'revoked')
+  const reauthentication = await authenticateRequest(
+    mcpRequest(issued.secret, { jsonrpc: '2.0', id: 4, method: 'ping' }),
+    env,
+  )
+  assert.equal(reauthentication.principal, null)
+  assert.equal(reauthentication.denial_code, 'INVALID_BOUNDED_WRITE_CREDENTIAL')
+
+  const audit = [...storage.values.values()].filter((value) => value?.event)
+  assert.ok(audit.some((event) => event.event === 'mcp_tool_call'))
+  assert.ok(audit.some((event) => event.event === 'bounded_write_terminal_cleanup'))
+  assert.equal(JSON.stringify(audit).includes(issued.secret), false)
 })
