@@ -41,4 +41,3 @@ test('hard dependencies gate readiness while optional dependencies do not', () =
   assert.equal(executionTaskReadiness(task('b', [{ task_id: 'a', kind: 'hard' }]), [task('a', [], 'succeeded')]), 'ready')
   assert.equal(executionTaskReadiness(task('b', [{ task_id: 'a', kind: 'optional' }]), [task('a', [], 'failed')]), 'ready')
 })
-
