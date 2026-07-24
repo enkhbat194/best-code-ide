@@ -26,4 +26,3 @@ test('legacy owner MCP advertises execution contracts while subscription profile
   assert.ok(subscription.every((tool) => tool.annotations.readOnlyHint && tool._meta['bestcode/safetyClass'] === 'read-only'))
   assert.ok(subscription.every((tool) => !legacy.has('mission_task_result_submit') || tool.name !== 'mission_task_result_submit'))
 })
-
