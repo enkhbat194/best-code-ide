@@ -1,0 +1,114 @@
+name: Chat 10 Production Runtime Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_isolated_runtime_smoke:
+        description: Type RUN-CHAT10-ISOLATED-SMOKE to approve synthetic production Mission mutations
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bestcode-chat10-production-runtime-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    name: Verify isolated Mission execution runtime
+    if: ${{ inputs.confirm_isolated_runtime_smoke == 'RUN-CHAT10-ISOLATED-SMOKE' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    env:
+      BESTCODE_BACKEND_URL: https://best-code-ide.enkhbat194.workers.dev
+      BESTCODE_PRODUCTION_WORKERS: >-
+        [{"name":"best-code-ide","root_directory":"backend"},{"name":"best-code-ide-appl","root_directory":"frontend"}]
+    steps:
+      - name: Enforce approved production source
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "::error::Chat 10 production runtime smoke must run from refs/heads/main; got $GITHUB_REF"
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Test runtime smoke controller and secret redaction
+        run: node --test scripts/chat10-production-runtime-smoke.test.mjs
+      - name: Require protected production secrets
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          BESTCODE_AUTH_TOKEN: ${{ secrets.BESTCODE_AUTH_TOKEN }}
+        run: |
+          if [[ -z "$CLOUDFLARE_API_TOKEN" ]]; then
+            echo "::error::GitHub environment production is missing secret CLOUDFLARE_API_TOKEN or Actions cannot read environment secrets."
+            exit 1
+          fi
+          if [[ -z "$CLOUDFLARE_ACCOUNT_ID" ]]; then
+            echo "::error::GitHub environment production is missing secret CLOUDFLARE_ACCOUNT_ID or Actions cannot read environment secrets."
+            exit 1
+          fi
+          if [[ -z "$BESTCODE_AUTH_TOKEN" ]]; then
+            echo "::error::GitHub environment production is missing secret BESTCODE_AUTH_TOKEN or this workflow lacks environment access."
+            exit 1
+          fi
+      - name: Require exact main deployment and 100 percent traffic
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: >-
+          node scripts/cloudflare-release-integrity.mjs
+          --repository "$GITHUB_REPOSITORY"
+          --branch main
+          --expected-sha "$GITHUB_SHA"
+          --repair-preview-triggers false
+          --wait-seconds 900
+          --poll-seconds 20
+          --output artifacts/chat10-runtime-release-integrity.json
+      - name: Run isolated owner-authenticated Mission execution smoke
+        env:
+          BESTCODE_AUTH_TOKEN: ${{ secrets.BESTCODE_AUTH_TOKEN }}
+        run: >-
+          node scripts/chat10-production-runtime-smoke.mjs
+          --backend-url "$BESTCODE_BACKEND_URL"
+          --run-key "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          --output artifacts/chat10-production-runtime-smoke.json
+      - name: Scan immutable evidence for authentication leaks
+        if: always()
+        shell: bash
+        env:
+          BESTCODE_AUTH_TOKEN: ${{ secrets.BESTCODE_AUTH_TOKEN }}
+        run: |
+          if [[ ! -f artifacts/chat10-production-runtime-smoke.json ]]; then
+            echo "::error::Chat 10 runtime smoke evidence was not produced."
+            exit 1
+          fi
+          node -e "
+            const fs = require('node:fs');
+            const evidence = fs.readFileSync('artifacts/chat10-production-runtime-smoke.json', 'utf8');
+            const token = process.env.BESTCODE_AUTH_TOKEN || '';
+            if (token && evidence.includes(token)) process.exit(1);
+            if (/authorization/i.test(evidence) || /bearer\\s/i.test(evidence)) process.exit(1);
+            const parsed = JSON.parse(evidence);
+            if (parsed.security.token_value_persisted !== false) process.exit(1);
+            if (parsed.security.auth_header_persisted !== false) process.exit(1);
+            if (parsed.security.subscription_credential_created !== false) process.exit(1);
+            if (parsed.security.subscription_mutation_profile_enabled !== false) process.exit(1);
+          "
+      - name: Upload redacted immutable evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat10-production-runtime-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/chat10-runtime-release-integrity.json
+            artifacts/chat10-production-runtime-smoke.json
+          if-no-files-found: warn
+          retention-days: 30
