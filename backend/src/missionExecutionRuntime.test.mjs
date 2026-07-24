@@ -73,4 +73,3 @@ test('retry, max attempts, blind denial retry and cancellation are enforced', ()
   assert.equal(cancelTask(baseTask({ status: 'running' })).status, 'cancelled')
   assert.throws(() => cancelTask(baseTask({ status: 'succeeded' })), /not allowed/)
 })
-
