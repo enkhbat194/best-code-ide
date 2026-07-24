@@ -35,6 +35,7 @@ export interface StagedChange {
   base_sha: string | null
   base_content: string | null
   proposed_content: string | null
+  proposed_sha256?: string | null
   diff: string
 }
 

@@ -25,6 +25,8 @@ import { commandMissionExecution } from './missionExecutionStore.ts'
 import { boundedWriteOpenapiSpec } from './boundedWriteOpenapi.ts'
 import { handleMissionApi } from './missionApi.ts'
 import { subscriptionToolNames } from './subscriptionTools.ts'
+import { normalizeBoundedRepositoryPath, scanBoundedWriteContent } from './boundedWriteSafety.ts'
+import { getFile } from './github.ts'
 
 class MemoryStorage {
   constructor() { this.values = new Map() }
@@ -317,22 +319,34 @@ test('bounded MCP rejects tool, branch, project, and path widening before execut
     },
     {
       name: 'repository_write_file',
-      args: { project_id: 'other', branch: baseInput.branch, path: 'docs/smoke/a.md', content: 'safe' },
+      args: {
+        project_id: 'other', branch: baseInput.branch, path: 'docs/smoke/a.md', content: 'safe',
+        expected_branch_head_sha: baseInput.base_sha, expected_old_hash: 'absent',
+      },
       code: 'PROJECT_SCOPE_DENIED',
     },
     {
       name: 'repository_write_file',
-      args: { project_id: 'bestcode', branch: 'agent/other', path: 'docs/smoke/a.md', content: 'safe' },
+      args: {
+        project_id: 'bestcode', branch: 'agent/other', path: 'docs/smoke/a.md', content: 'safe',
+        expected_branch_head_sha: baseInput.base_sha, expected_old_hash: 'absent',
+      },
       code: 'BRANCH_SCOPE_DENIED',
     },
     {
       name: 'repository_write_file',
-      args: { project_id: 'bestcode', branch: baseInput.branch, path: '.github/workflows/evil.yml', content: 'safe' },
+      args: {
+        project_id: 'bestcode', branch: baseInput.branch, path: '.github/workflows/evil.yml', content: 'safe',
+        expected_branch_head_sha: baseInput.base_sha, expected_old_hash: 'absent',
+      },
       code: 'PROTECTED_PATH_DENIED',
     },
     {
       name: 'repository_write_file',
-      args: { project_id: 'bestcode', branch: baseInput.branch, path: 'backend/src/index.ts', content: 'safe' },
+      args: {
+        project_id: 'bestcode', branch: baseInput.branch, path: 'backend/src/index.ts', content: 'safe',
+        expected_branch_head_sha: baseInput.base_sha, expected_old_hash: 'absent',
+      },
       code: 'PATH_SCOPE_DENIED',
     },
   ]
@@ -349,6 +363,112 @@ test('bounded MCP rejects tool, branch, project, and path widening before execut
     )
     const body = await response.json()
     assert.equal(body.error.data.code, item.code)
+  }
+})
+
+test('bounded repository path and content scans fail closed without persisting raw secrets', async () => {
+  assert.equal(normalizeBoundedRepositoryPath('/docs/smoke/a.md'), 'docs/smoke/a.md')
+  for (const path of [
+    'docs/%2e%2e/secret.txt',
+    'docs\\..\\secret.txt',
+    'docs/../secret.txt',
+    '.GIT/config',
+    'docs/\u2024\u2024/secret.txt',
+  ]) assert.throws(() => normalizeBoundedRepositoryPath(path), /PATH|path/i)
+
+  const safe = scanBoundedWriteContent('repository_write_file', { content: 'bounded safe text\n' })
+  assert.equal(safe.safe, true)
+  const token = ['ghp', 'abcdefghijklmnopqrstuvwxyz012345'].join('_')
+  const unsafe = scanBoundedWriteContent('repository_write_file', { content: `value=${token}` })
+  assert.equal(unsafe.safe, false)
+  assert.ok(unsafe.findings.includes('secret:github_token'))
+  const bidi = scanBoundedWriteContent('repository_write_file', { content: 'safe\u202eunsafe' })
+  assert.equal(bidi.safe, false)
+  assert.ok(bidi.findings.includes('dangerous:bidi_control'))
+
+  const { env, storage } = environment()
+  const issued = await boundedWriteCredentialCreate(env, baseInput, '2026-07-24T06:00:00.000Z')
+  const principal = (await authenticateRequest(
+    mcpRequest(issued.secret, { jsonrpc: '2.0', id: 1, method: 'initialize' }),
+    env,
+    '2026-07-24T06:01:00.000Z',
+  )).principal
+  const request = mcpRequest(issued.secret, {
+    jsonrpc: '2.0',
+    id: 2,
+    method: 'tools/call',
+    params: {
+      name: 'repository_write_file',
+      arguments: {
+        project_id: baseInput.project_id,
+        branch: baseInput.branch,
+        path: 'docs/smoke/unsafe.md',
+        content: `value=${token}`,
+        expected_branch_head_sha: baseInput.base_sha,
+        expected_old_hash: 'absent',
+      },
+    },
+  }, undefined, { 'Idempotency-Key': 'bounded-secret-scan-1' })
+  const response = await handleMcp(request, env, principal)
+  const body = await response.json()
+  assert.equal(body.error.data.code, 'SECRET_PATTERN_DENIED')
+  const audit = [...storage.values.values()].filter((value) => value?.event)
+  assert.ok(audit.some((event) =>
+    event.event === 'bounded_write_content_scan' &&
+    event.details.outcome === 'denied' &&
+    event.details.findings.includes('secret:github_token')))
+  assert.equal(JSON.stringify(audit).includes(token), false)
+})
+
+test('GitHub symlink content cannot enter the bounded file mutation path', async (t) => {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    type: 'symlink',
+    target: '../../outside-scope',
+    sha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+  }), { headers: { 'Content-Type': 'application/json' } })
+  t.after(() => { globalThis.fetch = originalFetch })
+  await assert.rejects(
+    getFile('test-github-token', 'enkhbat194', 'best-code-ide', 'docs/smoke/link', baseInput.branch),
+    /not a file/,
+  )
+})
+
+test('bounded file mutation requires exact current branch and old-file hashes', async () => {
+  const { env } = environment()
+  const issued = await boundedWriteCredentialCreate(env, baseInput, '2026-07-24T06:00:00.000Z')
+  const principal = (await authenticateRequest(
+    mcpRequest(issued.secret, { jsonrpc: '2.0', id: 1, method: 'initialize' }),
+    env,
+    '2026-07-24T06:01:00.000Z',
+  )).principal
+  for (const [id, argumentsValue, code] of [
+    [2, {
+      project_id: baseInput.project_id,
+      branch: baseInput.branch,
+      path: 'docs/smoke/a.md',
+      content: 'safe',
+      expected_old_hash: 'absent',
+    }, 'EXPECTED_BRANCH_HEAD_SHA_REQUIRED'],
+    [3, {
+      project_id: baseInput.project_id,
+      branch: baseInput.branch,
+      path: 'docs/smoke/a.md',
+      content: 'safe',
+      expected_branch_head_sha: baseInput.base_sha,
+    }, 'EXPECTED_OLD_HASH_REQUIRED'],
+  ]) {
+    const response = await handleMcp(
+      mcpRequest(issued.secret, {
+        jsonrpc: '2.0',
+        id,
+        method: 'tools/call',
+        params: { name: 'repository_write_file', arguments: argumentsValue },
+      }),
+      env,
+      principal,
+    )
+    assert.equal((await response.json()).error.data.code, code)
   }
 })
 
@@ -464,6 +584,54 @@ test('branch creation checks the approved base SHA before creating a ref', async
   assert.equal(result.structuredContent.ok, false)
   assert.match(result.structuredContent.error.message, /CONTEXT_CONFLICT/)
   assert.equal(createCalls, 0)
+})
+
+test('bounded MCP revalidates the approved main source lock before reserving a repository mutation', async (t) => {
+  const { env, storage } = environment()
+  const issued = await boundedWriteCredentialCreate(env, baseInput)
+  const principal = (await authenticateRequest(
+    mcpRequest(issued.secret, { jsonrpc: '2.0', id: 1, method: 'initialize' }),
+    env,
+  )).principal
+  const originalFetch = globalThis.fetch
+  let writeCalls = 0
+  globalThis.fetch = async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init)
+    const url = new URL(request.url)
+    if (request.method === 'GET' && url.pathname.endsWith('/branches/main')) {
+      return new Response(JSON.stringify({
+        name: 'main',
+        protected: true,
+        commit: { sha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' },
+      }), { headers: { 'Content-Type': 'application/json' } })
+    }
+    writeCalls += 1
+    throw new Error(`Unexpected GitHub request: ${request.method} ${request.url}`)
+  }
+  t.after(() => { globalThis.fetch = originalFetch })
+
+  const response = await handleMcp(
+    mcpRequest(issued.secret, {
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: {
+        name: 'repository_create_branch',
+        arguments: { project_id: baseInput.project_id, name: baseInput.branch },
+      },
+    }, undefined, { 'Idempotency-Key': 'bounded-source-lock-1' }),
+    env,
+    principal,
+  )
+  const body = await response.json()
+  assert.equal(body.error.data.code, 'STALE_BASE_SHA_DENIED')
+  assert.equal(writeCalls, 0)
+  const credential = await boundedWriteCredentialGet(env, issued.credential.credential_id)
+  assert.equal(credential.usage.operations, 0)
+  const audit = [...storage.values.values()].filter((value) => value?.event)
+  assert.ok(audit.some((event) =>
+    event.event === 'bounded_write_mutation_denied' &&
+    event.details.denial_code === 'STALE_BASE_SHA_DENIED'))
 })
 
 test('owner issue requires the authoritative active task, attempt, lease, fencing token, and approval', async () => {

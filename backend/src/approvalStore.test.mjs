@@ -228,6 +228,7 @@ test('changed file-delivery context is invalidated before a commit object is cre
     env,
   )
   assert.equal(staged.structuredContent.status, 'pending_approval')
+  assert.match(staged.structuredContent.result.changes[0].proposed_sha256, /^[a-f0-9]{64}$/)
   const operationId = staged.structuredContent.operation_id
   assert.equal((await decide(store, operationId, 'approved', crypto.randomUUID())).status, 200)
 

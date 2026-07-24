@@ -1,5 +1,8 @@
 import { persistSecurityAudit } from './securityAudit'
 import { authorizeBoundedWriteOperation } from './boundedWriteCredentials'
+import { normalizeBoundedRepositoryPath, scanBoundedWriteContent } from './boundedWriteSafety'
+import * as gh from './github'
+import { getProject } from './projects'
 import type { RequestPrincipal } from './subscriptionCredentialTypes'
 import {
   executeGatewayTool,
@@ -200,7 +203,18 @@ function boundedWriteArguments(
   }
   if (name === 'repository_write_file' || name === 'repository_apply_patch') {
     args.branch = principal.branch
-    args.expected_branch_head_sha = principal.base_sha
+    args.expected_base_sha = principal.base_sha
+    if (typeof raw.expected_branch_head_sha !== 'string' || !/^[a-f0-9]{40,64}$/i.test(raw.expected_branch_head_sha)) {
+      throw new Error('EXPECTED_BRANCH_HEAD_SHA_REQUIRED')
+    }
+    if (
+      typeof raw.expected_old_hash !== 'string' ||
+      (raw.expected_old_hash !== 'absent' && !/^[a-f0-9]{40,64}$/i.test(raw.expected_old_hash))
+    ) {
+      throw new Error('EXPECTED_OLD_HASH_REQUIRED')
+    }
+    args.expected_branch_head_sha = raw.expected_branch_head_sha.toLowerCase()
+    args.expected_old_hash = raw.expected_old_hash.toLowerCase()
   }
   if (name === 'build_start' || name === 'test_start') args.branch = principal.branch
   if (name === 'repository_create_pull_request') {
@@ -218,7 +232,7 @@ function boundedWriteArguments(
     }
   }
   if (typeof args.path === 'string') {
-    const path = args.path.replace(/^\/+/, '')
+    const path = normalizeBoundedRepositoryPath(args.path)
     if (principal.denied_paths.some((pattern) => globMatches(pattern, path))) throw new Error('PROTECTED_PATH_DENIED')
     if (!principal.allowed_paths.some((pattern) => globMatches(pattern, path))) throw new Error('PATH_SCOPE_DENIED')
     args.path = path
@@ -233,6 +247,12 @@ const BOUNDED_MUTATIONS = new Set([
   'mission_task_progress_append', 'mission_task_result_submit', 'mission_task_lease_release',
 ])
 
+const BOUNDED_SOURCE_LOCKED_MUTATIONS = new Set([
+  'repository_create_branch', 'repository_write_file', 'repository_apply_patch',
+  'repository_commit', 'repository_push', 'repository_create_pull_request',
+  'build_start', 'test_start',
+])
+
 function boundedOperationCost(name: string, args: Record<string, unknown>) {
   const changed = name === 'repository_write_file' || name === 'repository_apply_patch'
   const content = typeof args.content === 'string' ? args.content : typeof args.patch === 'string' ? args.patch : ''
@@ -242,6 +262,18 @@ function boundedOperationCost(name: string, args: Record<string, unknown>) {
     commits: name === 'repository_commit' ? 1 : 0,
     pushes: name === 'repository_push' ? 1 : 0,
     pull_requests: name === 'repository_create_pull_request' ? 1 : 0,
+  }
+}
+
+async function assertBoundedSourceLock(
+  env: Env,
+  token: string,
+  principal: Extract<RequestPrincipal, { kind: 'bounded-write' }>,
+): Promise<void> {
+  const project = getProject(env, principal.project_id)
+  const source = await gh.getBranch(token, project.owner, project.repo, project.defaultBranch)
+  if (!source || source.sha.toLowerCase() !== principal.base_sha.toLowerCase()) {
+    throw new Error('STALE_BASE_SHA_DENIED')
   }
 }
 
@@ -388,6 +420,35 @@ export async function handleMcp(
             code,
           })
         }
+        const contentScan = scanBoundedWriteContent(name, effectiveArgs)
+        if (contentScan.scanned) {
+          await persistSecurityAudit(env, 'bounded_write_content_scan', {
+            identity: 'unknown',
+            request_id: context.request_id,
+            credential_id: principal.credential_id,
+            project_id: principal.project_id,
+            mission_id: principal.mission_id,
+            task_id: principal.task_id,
+            attempt_id: principal.attempt_id,
+            lease_id: principal.lease_id,
+            fencing_token: principal.fencing_token,
+            agent_id: principal.agent_id,
+            provider: principal.provider,
+            branch: principal.branch,
+            scope_hash: principal.scope_hash,
+            tool: name,
+            outcome: contentScan.safe ? 'passed' : 'denied',
+            scanned_bytes: contentScan.byte_length,
+            findings: contentScan.findings,
+          }).catch(() => undefined)
+          if (!contentScan.safe) {
+            const code = contentScan.findings.some((finding) => finding.startsWith('secret:'))
+              ? 'SECRET_PATTERN_DENIED'
+              : 'DANGEROUS_CONTENT_DENIED'
+            await persistBoundedDenial(env, effectiveRequest, principal, name, code, context.request_id)
+            return rpcError(message.id, -32001, 'Proposed content failed bounded safety scan', 403, { code })
+          }
+        }
         if (BOUNDED_MUTATIONS.has(name)) {
           const idempotencyKey = context.idempotency_key
           if (!idempotencyKey) {
@@ -395,6 +456,23 @@ export async function handleMcp(
             return rpcError(message.id, -32001, 'Idempotency-Key is required for bounded mutations', 400, {
               code: 'IDEMPOTENCY_KEY_REQUIRED',
             })
+          }
+          if (BOUNDED_SOURCE_LOCKED_MUTATIONS.has(name)) {
+            if (!githubToken) {
+              await persistBoundedDenial(env, effectiveRequest, principal, name, 'GITHUB_TOKEN_UNAVAILABLE', context.request_id)
+              return rpcError(message.id, -32001, 'Bounded repository authority is unavailable', 503, {
+                code: 'GITHUB_TOKEN_UNAVAILABLE',
+              })
+            }
+            try {
+              await assertBoundedSourceLock(env, githubToken, principal)
+            } catch (error) {
+              const code = error instanceof Error && error.message === 'STALE_BASE_SHA_DENIED'
+                ? error.message
+                : 'SOURCE_LOCK_CHECK_FAILED'
+              await persistBoundedDenial(env, effectiveRequest, principal, name, code, context.request_id)
+              return rpcError(message.id, -32001, 'Approved source lock is no longer current', 409, { code })
+            }
           }
           try {
             const authorization = await authorizeBoundedWriteOperation(env, principal, {

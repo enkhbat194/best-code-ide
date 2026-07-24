@@ -95,6 +95,36 @@ storage migration шаардахгүй. Authenticated REST facade нь ижил 
 Одоогийн `subscription-readonly-v1` profile exact 12 read-only tool хэвээр; write-capable credential
 нээхгүй. Merge/deploy/rollback автомат биш бөгөөд owner approval boundary өөрчлөгдөөгүй.
 
+#### Bounded Write Agent — CODE READY / NOT PRODUCTION ACTIVATED
+
+Chat 11-ийн `subscription-write-bounded-v1` нь read-only profile-ийг орлохгүй тусдаа capability
+болон MCP title (`BestCode Bounded Write`) юм. Raw bearer зөвхөн owner issue response-д нэг удаа
+буцаж, Durable Object storage-д SHA-256 verifier хадгалагдана. Default TTL 30 минут, maximum TTL
+2 цаг.
+
+Credential issue болон mutation бүр дээр existing Mission execution aggregate-аас project,
+Mission, active plan, running approval-required task, owner-approved gate, active Attempt, active
+lease, fencing token, assigned agent, approval record, path scope-ийг дахин шалгана. Credential
+scope нь branch, approved main base SHA, tool/path allowlist, protected-path denylist, operation/file/
+byte/commit/push/PR limit болон idempotency namespace-тай deterministic hash-аар холбогдоно.
+
+Repository mutation path нь:
+
+- exact current branch head болон old-file hash шаардана;
+- approved main source-lock-ийг operation reserve-ээс өмнө дахин шалгана;
+- encoded/non-canonical traversal, `.git`, protected path, binary control, bidi control болон
+  credential-like content-ийг fail-closed хориглоно;
+- proposed UTF-8 content SHA-256-ийг approval operation-д хадгалж, commit preparation-ийн өмнө
+  hash болон content safety-г дахин шалгана;
+- merge, deploy, rollback, secret/credential administration, approval decision, destructive branch
+  operation болон arbitrary shell-ийг advertise хийхгүй.
+
+Bounded agent progress/result/lease-release command дээр client-ийн Mission/task/attempt/lease/
+fencing argument-ийг authoritative credential binding-аар сольж dispatch хийнэ. Terminal result,
+block/cancel/release/rejection эсвэл Mission cancellation нь task credential-үүдийг revoke хийнэ;
+Mission state өөрөө cleanup алдаанаас үл хамааран fail-closed хэвээр үлдэнэ. Owner credential API
+болон `/openapi-bounded-write.json` нь agent MCP registry-ээс тусгаарлагдсан.
+
 #### Mission Service — TARGET
 
 Durable mission graph:

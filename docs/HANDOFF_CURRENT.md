@@ -46,9 +46,10 @@ GitHub repository `enkhbat194/best-code-ide` доторх `docs/HANDOFF_CURRENT.
 - Backend TypeScript typecheck: passed.
 - Next: Package C owner write-task approval, live Mission/attempt/lease validation on issue and every mutation, owner API/OpenAPI, progress/result/audit integration, and automatic revoke on terminal execution state.
 
-## Chat 11 Package C WIP shutdown checkpoint
+## Chat 11 Package C completion
 
 - Branch/starting HEAD: `agent/chat11-bounded-write-agent` from Package B commit `520a442`.
+- Latest remote checkpoint before completion hardening: `1bee2afe032270d0e63b881b1955b82aa6bd0196`.
 - Added authoritative Mission Durable Object validation for project, Mission, active plan, running approval-required task, owner-approved gate, active attempt, active lease, fencing token, assigned agent, approval record, and exact task path scope.
 - Owner credential issue now requires that complete live authority intersection.
 - Every bounded mutation revalidates Mission authority before durable usage reservation and execution.
@@ -57,5 +58,10 @@ GitHub repository `enkhbat194/best-code-ide` доторх `docs/HANDOFF_CURRENT.
 - Added bounded Mission progress/result/lease-release tool support; owner approval tools remain absent.
 - Terminal result/block/cancel/release/rejection/Mission cancellation triggers best-effort credential cleanup; Mission state independently remains fail-closed.
 - Added audit events for issue, denial, idempotent replay, emergency revoke, and terminal cleanup without raw credential data.
-- Package C targeted tests cover active/stale task, attempt, lease, fencing, approval, cancellation, scope widening, one-time secret, emergency revoke, automatic terminal revoke, and OpenAPI separation.
-- This is a WIP checkpoint, not Package C completion. Still required: finish full audit-event coverage review, add/verify bounded MCP progress/result integration tests, update canonical architecture/roadmap docs, run the complete backend/frontend regression suite, and continue Package D production smoke workflow.
+- Bounded file mutations now require exact current branch-head and old-file hashes, revalidate the approved main source-lock before usage reservation, reject encoded/non-canonical traversal and case-insensitive `.git` access, and audit secret/dangerous-content scans without raw content.
+- Staged UTF-8 content records a SHA-256 hash; commit preparation rechecks both content safety and hash integrity.
+- Package C targeted tests cover active/stale task, attempt, lease, fencing, approval, cancellation, scope widening, one-time secret, emergency revoke, automatic terminal revoke, bounded MCP progress/result, safe audit completeness, encoded/protected paths, secret scan, stale source-lock, and OpenAPI separation.
+- Targeted bounded/Mission/read-only suite: 53 tests passed; focused approval/content-integrity suite: 29 tests passed.
+- Full backend suite passed every product check; the only local failure remains the pre-existing Windows-only `typecheckPipeline.test.mjs` harness because `bash` is unavailable and its child exit code is `null`. Backend TypeScript typecheck passed.
+- Frontend lint passed with one pre-existing `no-control-regex` warning; production build passed. The existing lockfile audit reports one high-severity transitive dependency and was not mutated by this package.
+- Package C diff/security review is complete. Next: Package D protected production smoke workflow, connector/owner-visible contract closeout, PR/CI, and production verification.

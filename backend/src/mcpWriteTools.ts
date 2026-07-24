@@ -3,6 +3,7 @@ import { createApproval, getApproval, listApprovals, markCompleted, markSupersed
 import type { ApprovalOperation, RiskLevel, StagedChange } from './approvalStore'
 import { createUnifiedDiff, applyUnifiedPatch } from './patch'
 import { getProject, type ProjectConfig } from './projects'
+import { sha256Hex } from './subscriptionCredentials'
 import type { Env } from './types'
 
 const MAX_FILE_CHARS = 500_000
@@ -229,8 +230,11 @@ function validateWorkingBranch(branch: string): void {
 function normalizePath(value: string): string {
   const path = value.trim().replace(/^\/+/, '')
   if (!path || path.length > 240) throw new Error('INVALID_PATH: path is required and must be at most 240 characters')
-  if (path.split('/').some((part) => part === '..' || part === '.')) throw new Error('INVALID_PATH: relative path segments are not allowed')
-  if (path.startsWith('.git/')) throw new Error('INVALID_PATH: .git paths are not accessible')
+  if (/[\u0000-\u001f\u007f\\]/.test(path)) throw new Error('INVALID_PATH: control characters and backslashes are not allowed')
+  if (/%[a-f0-9]{2}/i.test(path)) throw new Error('INVALID_PATH: encoded path sequences are not allowed')
+  if (path.normalize('NFKC') !== path) throw new Error('INVALID_PATH: non-canonical path characters are not allowed')
+  if (path.split('/').some((part) => !part || part === '..' || part === '.')) throw new Error('INVALID_PATH: relative or empty path segments are not allowed')
+  if (path.toLowerCase() === '.git' || path.toLowerCase().startsWith('.git/')) throw new Error('INVALID_PATH: .git paths are not accessible')
   return path
 }
 
@@ -438,7 +442,12 @@ async function stageOperation(
       risk: operation.risk,
       risk_reasons: operation.risk_reasons,
       expires_at: operation.expires_at,
-      changes: operation.changes.map((item) => ({ action: item.action, path: item.path, base_sha: item.base_sha })),
+      changes: operation.changes.map((item) => ({
+        action: item.action,
+        path: item.path,
+        base_sha: item.base_sha,
+        proposed_sha256: item.proposed_sha256 ?? null,
+      })),
       diff: change.diff,
       next_action: 'The user must approve this operation in BestCode before any commit or push tool can deliver it.',
     },
@@ -555,6 +564,7 @@ export async function executeSafeWriteMcpTool(
             action: change.action,
             path: change.path,
             base_sha: change.base_sha,
+            proposed_sha256: change.proposed_sha256 ?? null,
             diff: change.diff,
           })),
         },
@@ -595,6 +605,12 @@ export async function executeSafeWriteMcpTool(
     branch = requireString(args, 'branch')
     validateWorkingBranch(branch)
     const path = normalizePath(requireString(args, 'path'))
+    if (typeof args.expected_base_sha === 'string' && args.expected_base_sha.trim()) {
+      const source = await gh.getBranch(token, project.owner, project.repo, project.defaultBranch)
+      if (!source || source.sha !== args.expected_base_sha.trim().toLowerCase()) {
+        throw new Error(`CONTEXT_CONFLICT: ${project.defaultBranch} does not match expected base SHA`)
+      }
+    }
     if (typeof args.expected_branch_head_sha === 'string' && args.expected_branch_head_sha.trim()) {
       const currentBranch = await gh.getBranch(token, project.owner, project.repo, branch)
       if (!currentBranch || currentBranch.sha !== args.expected_branch_head_sha.trim().toLowerCase()) {
@@ -618,6 +634,7 @@ export async function executeSafeWriteMcpTool(
         base_sha: existing?.sha ?? null,
         base_content: existing?.content ?? null,
         proposed_content: content,
+        proposed_sha256: await sha256Hex(content),
         diff,
       })
     }
@@ -638,6 +655,7 @@ export async function executeSafeWriteMcpTool(
         base_sha: existing.sha,
         base_content: existing.content,
         proposed_content: applied.content,
+        proposed_sha256: await sha256Hex(applied.content),
         diff,
       })
     }
@@ -652,6 +670,7 @@ export async function executeSafeWriteMcpTool(
         base_sha: existing.sha,
         base_content: existing.content,
         proposed_content: null,
+        proposed_sha256: null,
         diff,
       })
     }

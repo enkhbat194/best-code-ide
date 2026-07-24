@@ -223,6 +223,24 @@ observation гарсны дараа package-г `COMPLETED` болгоно.
 - Markdown/JSON/file bundle export;
 - project/asset backup and restore test.
 
+### 4E — Bounded write agent
+
+- `subscription-readonly-v1` exact 12 tool хэвээр үлдээсэн тусдаа
+  `subscription-write-bounded-v1` capability;
+- owner-approved Mission task + active Attempt/lease/fencing + exact agent/provider binding;
+- short-lived one-time bearer, hashed verifier, revoke/expiry/terminal cleanup;
+- bound working branch, current main source-lock, exact branch-head/old-file hash;
+- tool/path allowlist, protected-path denylist, secret/dangerous-content scan, proposed-content hash;
+- atomic operation/file/byte/commit/push/draft-PR limits ба idempotency;
+- owner-only issue/status/revoke/emergency API болон тусдаа OpenAPI;
+- bounded MCP progress/result/lease-release, authoritative audit, merge/deploy/rollback эрхгүй.
+
+**Chat 11 code-ready evidence:** Package A/B/C targeted regressions, Mission runtime integration,
+content/path/source-lock denial, raw-secret absence, terminal revoke, OpenAPI separation болон
+backend typecheck ногоон. Production activation нь protected smoke workflow, full regression,
+PR/CI, owner merge/deploy boundary болон exact production SHA/traffic verification дуустал
+хийгдэхгүй.
+
 ### Migration
 
 - v1 development tasks remain readable;
