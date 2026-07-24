@@ -12,6 +12,7 @@ export const REQUIRED_TOOLS = [
 ]
 const SECRET_PATTERN = /\bbcsub_v1\.[a-f0-9-]{36}\.[A-Za-z0-9_-]{32,128}\b/gi
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9._:@/-]+$/
+const MCP_RPC_TIMEOUT_MS = 120_000
 
 function text(value, max = 1000) {
   return typeof value === 'string' ? value.trim().slice(0, max) : ''
@@ -39,9 +40,9 @@ export function assertNoScopedSecret(value) {
   if (SECRET_PATTERN.test(raw)) throw new Error('Scoped credential leaked into evidence')
 }
 
-async function requestJson(fetchImpl, url, init, expectedStatus) {
+async function requestJson(fetchImpl, url, init, expectedStatus, timeoutMs = 30_000) {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 30_000)
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
   let response
   try {
     response = await fetchImpl(url, { ...init, signal: controller.signal })
@@ -66,9 +67,10 @@ async function rpc(fetchImpl, url, token, id, method, params, expectedStatus = 2
       'X-BestCode-Request-Id': `scoped-smoke-${id}`,
       'X-BestCode-Agent-Id': 'spoofed-smoke-agent',
       'X-BestCode-Agent-Provider': 'spoofed-provider',
+      'X-BestCode-Timeout-Ms': String(MCP_RPC_TIMEOUT_MS),
     },
     body: JSON.stringify({ jsonrpc: '2.0', id, method, ...(params ? { params } : {}) }),
-  }, expectedStatus)
+  }, expectedStatus, MCP_RPC_TIMEOUT_MS)
   assertNoScopedSecret(result.raw)
   return result
 }
