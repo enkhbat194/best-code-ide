@@ -494,22 +494,37 @@ export async function runProductionRuntimeSmoke(options) {
     )
     checks.stale_lease_denied = true
 
-    stage = 'identity_spoof_denial'
+    stage = 'agent_identity_spoof_denial'
     await deniedCommand(
-      'agent_provider_spoof',
+      'agent_identity_spoof',
       'mission_task_lease_heartbeat',
       'chat10-smoke-agent',
-      `deny-spoof-${sha256(fixtures.runKey).slice(0, 18)}`,
+      `deny-agent-spoof-${sha256(fixtures.runKey).slice(0, 12)}`,
       {
         task_id: fixtures.taskIds.foundation,
         lease_id: lease.lease_id,
         fencing_token: lease.fencing_token,
         agent_id: 'spoofed-agent',
+      },
+      /agent identity spoof/i,
+    )
+    checks.agent_identity_spoof_denied = true
+
+    stage = 'provider_identity_spoof_denial'
+    await deniedCommand(
+      'provider_identity_spoof',
+      'mission_task_lease_heartbeat',
+      'chat10-smoke-agent',
+      `deny-provider-spoof-${sha256(fixtures.runKey).slice(0, 9)}`,
+      {
+        task_id: fixtures.taskIds.foundation,
+        lease_id: lease.lease_id,
+        fencing_token: lease.fencing_token,
         provider: 'spoofed-provider',
       },
-      /spoof/i,
+      /provider identity spoof/i,
     )
-    checks.identity_spoof_denied = true
+    checks.provider_identity_spoof_denied = true
 
     stage = 'foundation_progress'
     await command(
