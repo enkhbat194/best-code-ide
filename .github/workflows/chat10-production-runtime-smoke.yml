@@ -23,9 +23,6 @@ jobs:
     timeout-minutes: 30
     environment: production
     env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      BESTCODE_AUTH_TOKEN: ${{ secrets.BESTCODE_AUTH_TOKEN }}
       BESTCODE_BACKEND_URL: https://best-code-ide.enkhbat194.workers.dev
       BESTCODE_PRODUCTION_WORKERS: >-
         [{"name":"best-code-ide","root_directory":"backend"},{"name":"best-code-ide-appl","root_directory":"frontend"}]
@@ -45,6 +42,10 @@ jobs:
         run: node --test scripts/chat10-production-runtime-smoke.test.mjs
       - name: Require protected production secrets
         shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          BESTCODE_AUTH_TOKEN: ${{ secrets.BESTCODE_AUTH_TOKEN }}
         run: |
           if [[ -z "$CLOUDFLARE_API_TOKEN" ]]; then
             echo "::error::GitHub environment production is missing secret CLOUDFLARE_API_TOKEN or Actions cannot read environment secrets."
@@ -59,6 +60,9 @@ jobs:
             exit 1
           fi
       - name: Require exact main deployment and 100 percent traffic
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: >-
           node scripts/cloudflare-release-integrity.mjs
           --repository "$GITHUB_REPOSITORY"
@@ -69,6 +73,8 @@ jobs:
           --poll-seconds 20
           --output artifacts/chat10-runtime-release-integrity.json
       - name: Run isolated owner-authenticated Mission execution smoke
+        env:
+          BESTCODE_AUTH_TOKEN: ${{ secrets.BESTCODE_AUTH_TOKEN }}
         run: >-
           node scripts/chat10-production-runtime-smoke.mjs
           --backend-url "$BESTCODE_BACKEND_URL"
@@ -77,6 +83,8 @@ jobs:
       - name: Scan immutable evidence for authentication leaks
         if: always()
         shell: bash
+        env:
+          BESTCODE_AUTH_TOKEN: ${{ secrets.BESTCODE_AUTH_TOKEN }}
         run: |
           if [[ ! -f artifacts/chat10-production-runtime-smoke.json ]]; then
             echo "::error::Chat 10 runtime smoke evidence was not produced."
