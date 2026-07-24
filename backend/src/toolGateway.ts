@@ -4,7 +4,7 @@ import { executeReadOnlyMcpTool, readOnlyMcpTools } from './mcpReadTools'
 import { executeRollbackMcpTool, rollbackMcpTools } from './mcpRollbackTools'
 import { executeSafeWriteMcpTool, safeWriteMcpTools } from './mcpWriteTools'
 import { executeMissionMcpTool, missionMcpTools } from './missionTools'
-import { missionExecutionMcpTools } from './missionExecutionTools'
+import { executeMissionExecutionTool, missionExecutionMcpTools } from './missionExecutionTools'
 import { executeProjectBrainMcpTool, projectBrainMcpTools } from './projectBrainTools'
 import { executeSubscriptionTool, subscriptionMcpTools } from './subscriptionTools'
 import type { Env } from './types'
@@ -279,6 +279,7 @@ async function executeLegacyTool(
   args: Record<string, unknown>,
   token: string,
   env: Env,
+  context: GatewayRequestContext,
 ): Promise<GatewayToolResult> {
   if (READ_ONLY_NAMES.has(name)) return executeReadOnlyMcpTool(name, args, token, env) as Promise<GatewayToolResult>
   if (SAFE_WRITE_NAMES.has(name)) return executeSafeWriteMcpTool(name, args, token, env) as Promise<GatewayToolResult>
@@ -287,9 +288,7 @@ async function executeLegacyTool(
   if (ROLLBACK_NAMES.has(name)) return executeRollbackMcpTool(name, args, token, env) as Promise<GatewayToolResult>
   if (PROJECT_BRAIN_NAMES.has(name)) return executeProjectBrainMcpTool(name, args, token, env) as Promise<GatewayToolResult>
   if (MISSION_NAMES.has(name)) return executeMissionMcpTool(name, args, token, env) as Promise<GatewayToolResult>
-  if (MISSION_EXECUTION_NAMES.has(name)) {
-    throw new Error('Mission execution mutation service is contract-ready but disabled until its durable store migration is activated')
-  }
+  if (MISSION_EXECUTION_NAMES.has(name)) return executeMissionExecutionTool(name, args, env, context) as Promise<GatewayToolResult>
   throw new Error(`Unknown BestCode tool: ${name}`)
 }
 
@@ -420,7 +419,7 @@ export async function executeGatewayTool(
     const result = await withTimeout(
       profile === 'subscription-readonly'
         ? executeSubscriptionTool(name, args, token, env, context.project_scope!)
-        : executeLegacyTool(name, args, token, env),
+        : executeLegacyTool(name, args, token, env, context),
       context.timeout_ms,
     )
     return addMetadata(result, context, name, safetyClass, Date.now() - startedAt)
