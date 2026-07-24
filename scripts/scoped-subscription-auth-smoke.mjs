@@ -252,7 +252,11 @@ export async function runScopedSubscriptionAuthSmoke({
     if (includeOpenAiReads) {
       currentStage = 'brain_export_summary'
       const summary = await rpc(fetchImpl, endpoint, scopedToken, 4, 'tools/call', {
-        name: 'brain_export_summary', arguments: { project_id: projectId },
+        name: 'brain_export_summary', arguments: {
+        project_id: projectId,
+        max_chars_per_document: 1000,
+        max_total_document_chars: 5000,
+      },
       })
       const summaryEnvelope = successfulEnvelope(summary, 'brain_export_summary')
       const currentMission = summaryEnvelope?.result?.current_mission
