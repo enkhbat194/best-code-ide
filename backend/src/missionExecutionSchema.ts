@@ -85,7 +85,7 @@ function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
   if (value && typeof value === 'object') {
     return `{${Object.entries(value as Record<string, unknown>)
-      .filter(([key]) => key !== 'deterministic_hash')
+      .filter(([key]) => key !== 'deterministic_hash' && key !== 'result_hash')
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([key, nested]) => `${JSON.stringify(key)}:${canonical(nested)}`).join(',')}}`
   }
@@ -151,3 +151,4 @@ export function assertExecutionPlan(plan: ExecutionPlan, tasks: ExecutionTask[])
   if (plan.task_ids.some((id) => !tasks.some((task) => task.task_id === id))) throw new Error('Execution plan references a missing task')
   assertExecutionGraph(plan.mission_id, tasks)
 }
+
