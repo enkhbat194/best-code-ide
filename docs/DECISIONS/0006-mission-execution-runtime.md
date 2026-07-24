@@ -31,3 +31,10 @@ permission эсвэл completion evidence болохгүй.
 Repository writer lease тусдаа бөгөөд write task аль алиныг нь хангана. Merge, deploy, rollback,
 credential/permission, paid resource, destructive delete болон irreversible migration нь owner-only
 approval gate хэвээр. Энэ ADR automatic merge/deploy/rollback болон paid provider-ийг нээхгүй.
+
+Execution aggregate нь existing `APPROVALS` Durable Object namespace-д Mission ID-аар хадгалагдана.
+Command бүр storage transaction дотор expected version, idempotency key, authoritative actor,
+project/Mission scope, lease ID болон fencing token-оо шалгана. Owner/full MCP executor болон
+authenticated REST facade хоёулаа энэ нэг state authority-г ашиглана. Тусдаа schema migration
+шаардахгүй боловч production activation, write-capable credential, live multi-agent execution нь
+энэ decision-ийн хүрээнд хийгдэхгүй.
