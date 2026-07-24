@@ -112,6 +112,9 @@ function leaseActor(input: ExecutionCommand, taskId: string): {
   project_id: string; mission_id: string; task_id: string; agent_id: string; lease_id: string; fencing_token: number
 } {
   if (input.args.agent_id && input.args.agent_id !== input.actor_id) throw new Error('Agent identity spoof denied')
+  if (input.args.provider || input.args.provider_id || input.args.agent_provider) {
+    throw new Error('Provider identity spoof denied')
+  }
   return {
     project_id: input.project_id,
     mission_id: input.mission_id,

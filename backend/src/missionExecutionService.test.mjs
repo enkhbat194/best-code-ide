@@ -178,6 +178,12 @@ test('idempotency replay is exact and stale versions, leases and identity spoof 
     lease_id: first.state.leases[0].lease_id,
     fencing_token: 1,
   }, 'heartbeat-key-0002', 'agent-a', 3)), /spoof/)
+  await assert.rejects(applyExecutionCommand(first.state, command('mission_task_lease_heartbeat', {
+    task_id: taskId,
+    provider: 'spoofed-provider',
+    lease_id: first.state.leases[0].lease_id,
+    fencing_token: 1,
+  }, 'heartbeat-key-0003', 'agent-a', 3)), /Provider identity spoof/)
 })
 
 test('approval-required result is blocked until an owner-only gate command approves it', async () => {
