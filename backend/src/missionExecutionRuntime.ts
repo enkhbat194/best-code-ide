@@ -224,4 +224,3 @@ export function cancelTask(task: ExecutionTask, now = new Date()): ExecutionTask
   assertExecutionTaskTransition(task.status, 'cancelled')
   return { ...task, status: 'cancelled', cancelled_at: now.toISOString(), version: task.version + 1 }
 }
-
