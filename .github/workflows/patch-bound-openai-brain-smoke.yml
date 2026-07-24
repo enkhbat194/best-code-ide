@@ -25,42 +25,53 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          import re
 
           smoke = Path('scripts/scoped-subscription-auth-smoke.mjs')
           text = smoke.read_text()
-          old = "name: 'brain_export_summary', arguments: { project_id: projectId },"
-          new = """name: 'brain_export_summary', arguments: {
+          replacement = """name: 'brain_export_summary', arguments: {
                   project_id: projectId,
                   max_chars_per_document: 1000,
                   max_total_document_chars: 5000,
                 },"""
-          if text.count(old) != 1:
-              raise SystemExit('Expected one brain_export_summary smoke call')
-          smoke.write_text(text.replace(old, new))
+          text, count = re.subn(
+              r"name: 'brain_export_summary',\s*arguments:\s*\{\s*project_id:\s*projectId\s*\},",
+              replacement,
+              text,
+              count=1,
+          )
+          if count != 1:
+              raise SystemExit('brain_export_summary smoke call not found')
+          smoke.write_text(text)
 
           tests = Path('scripts/scoped-subscription-auth-smoke.test.mjs')
           text = tests.read_text()
-          old = """    if (request.params.name === 'brain_export_summary') {
-              return response({ jsonrpc: '2.0', id: request.id, result: { structuredContent: {"""
-          new = """    if (request.params.name === 'brain_export_summary') {
-              assert.deepEqual(request.params.arguments, {
+          marker = "    if (request.params.name === 'brain_export_summary') {\n"
+          assertion = """      assert.deepEqual(request.params.arguments, {
                 project_id: 'bestcode',
                 max_chars_per_document: 1000,
                 max_total_document_chars: 5000,
               })
-              return response({ jsonrpc: '2.0', id: request.id, result: { structuredContent: {"""
-          if text.count(old) != 1:
-              raise SystemExit('Expected one brain_export_summary fake branch')
-          tests.write_text(text.replace(old, new))
+          """
+          if marker not in text:
+              raise SystemExit('brain_export_summary fake branch not found')
+          if 'max_chars_per_document: 1000' not in text:
+              text = text.replace(marker, marker + assertion, 1)
+          tests.write_text(text)
 
           trigger = Path('.github/triggers/openai-subscription-mcp-smoke.txt')
           text = trigger.read_text()
-          text = text.replace(
-              'Trigger nonce: 2026-07-24-openai-mcp-production-smoke-5',
+          text = re.sub(
+              r'Trigger nonce: .*',
               'Trigger nonce: 2026-07-24-openai-mcp-production-smoke-6',
-          ).replace(
-              'Reason: verify the Chat 9 subscription MCP integration with stale-credential cleanup and persistent redacted failure evidence.',
+              text,
+              count=1,
+          )
+          text = re.sub(
+              r'Reason: .*',
               'Reason: verify the Chat 9 subscription MCP integration with a schema-minimum bounded Brain export smoke.',
+              text,
+              count=1,
           )
           trigger.write_text(text)
 
@@ -71,6 +82,6 @@ jobs:
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add scripts/scoped-subscription-auth-smoke.mjs scripts/scoped-subscription-auth-smoke.test.mjs .github/triggers/openai-subscription-mcp-smoke.txt .github/workflows/patch-bound-openai-brain-smoke.yml
+          git add -A
           git commit -m "Bound OpenAI Brain smoke payload"
           git push origin HEAD:agent/bound-openai-brain-smoke
