@@ -1,4 +1,5 @@
 import { persistSecurityAudit } from './securityAudit'
+import { authorizeBoundedWriteOperation } from './boundedWriteCredentials'
 import type { RequestPrincipal } from './subscriptionCredentialTypes'
 import {
   executeGatewayTool,
@@ -39,7 +40,8 @@ function rpcError(id: string | number | null | undefined, code: number, message:
   )
 }
 
-function profileForRequest(req: Request): GatewayProfile {
+function profileForRequest(req: Request, principal: RequestPrincipal): GatewayProfile {
+  if (principal.kind === 'bounded-write') return 'subscription-write-bounded'
   return new URL(req.url).pathname === '/mcp/subscription' ? 'subscription-readonly' : 'legacy'
 }
 
@@ -162,7 +164,8 @@ function withCredentialAudit(result: GatewayToolResult, principal: RequestPrinci
       provider: principal.provider,
       mcp_profile: principal.profile,
       credential_version: principal.credential_version,
-      tool_set_version: principal.tool_set_version,
+      ...('tool_set_version' in principal ? { tool_set_version: principal.tool_set_version } : {}),
+      ...('scope_hash' in principal ? { scope_hash: principal.scope_hash } : {}),
       ...(prior.error?.code ? { denial_code: prior.error.code } : {}),
     },
   }
@@ -173,6 +176,64 @@ function withCredentialAudit(result: GatewayToolResult, principal: RequestPrinci
   }
 }
 
+function globMatches(pattern: string, value: string): boolean {
+  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+  const expression = escaped.replace(/\*\*/g, '\u0000').replace(/\*/g, '[^/]*').replace(/\u0000/g, '.*')
+  return new RegExp(`^${expression}$`, 'i').test(value)
+}
+
+function boundedWriteArguments(
+  principal: Extract<RequestPrincipal, { kind: 'bounded-write' }>,
+  name: string,
+  raw: Record<string, unknown>,
+): Record<string, unknown> {
+  if (raw.project_id !== undefined && raw.project_id !== principal.project_id) throw new Error('PROJECT_SCOPE_DENIED')
+  const args: Record<string, unknown> = { ...raw, project_id: principal.project_id }
+  const branch = typeof args.branch === 'string' ? args.branch : undefined
+  const branchName = typeof args.name === 'string' ? args.name : undefined
+  if (branch && branch !== principal.branch) throw new Error('BRANCH_SCOPE_DENIED')
+  if (branchName && branchName !== principal.branch) throw new Error('BRANCH_SCOPE_DENIED')
+  if (name === 'repository_create_branch') {
+    args.name = principal.branch
+    args.from_branch = 'main'
+    args.expected_base_sha = principal.base_sha
+  }
+  if (name === 'repository_write_file' || name === 'repository_apply_patch') {
+    args.branch = principal.branch
+    args.expected_branch_head_sha = principal.base_sha
+  }
+  if (name === 'build_start' || name === 'test_start') args.branch = principal.branch
+  if (name === 'repository_create_pull_request') {
+    args.base = 'main'
+    args.draft = true
+  }
+  if (typeof args.path === 'string') {
+    const path = args.path.replace(/^\/+/, '')
+    if (principal.denied_paths.some((pattern) => globMatches(pattern, path))) throw new Error('PROTECTED_PATH_DENIED')
+    if (!principal.allowed_paths.some((pattern) => globMatches(pattern, path))) throw new Error('PATH_SCOPE_DENIED')
+    args.path = path
+  }
+  return args
+}
+
+const BOUNDED_MUTATIONS = new Set([
+  'repository_create_branch', 'repository_write_file', 'repository_apply_patch',
+  'repository_commit', 'repository_push', 'repository_create_pull_request',
+  'build_start', 'test_start',
+])
+
+function boundedOperationCost(name: string, args: Record<string, unknown>) {
+  const changed = name === 'repository_write_file' || name === 'repository_apply_patch'
+  const content = typeof args.content === 'string' ? args.content : typeof args.patch === 'string' ? args.patch : ''
+  return {
+    changed_files: changed ? 1 : 0,
+    changed_bytes: changed ? new TextEncoder().encode(content).byteLength : 0,
+    commits: name === 'repository_commit' ? 1 : 0,
+    pushes: name === 'repository_push' ? 1 : 0,
+    pull_requests: name === 'repository_create_pull_request' ? 1 : 0,
+  }
+}
+
 /** Stateless JSON-response Streamable HTTP MCP endpoint. */
 export async function handleMcp(
   req: Request,
@@ -180,11 +241,12 @@ export async function handleMcp(
   principal: RequestPrincipal = { kind: 'owner', identity: 'owner' },
 ): Promise<Response> {
   const effectiveRequest = await requestForPrincipal(req, principal)
-  const profile = profileForRequest(effectiveRequest)
+  const profile = profileForRequest(effectiveRequest, principal)
   const url = new URL(effectiveRequest.url)
 
-  if (principal.kind === 'subscription') {
-    if (url.pathname !== '/mcp/subscription' || profile !== principal.profile) {
+  if (principal.kind !== 'owner') {
+    const expectedProfile = principal.kind === 'bounded-write' ? 'subscription-write-bounded' : principal.profile
+    if (url.pathname !== '/mcp/subscription' || profile !== expectedProfile) {
       return rpcError(undefined, -32001, 'Forbidden', 403, { code: 'ENDPOINT_NOT_ALLOWED' })
     }
     if (url.searchParams.get('project_id') !== principal.project_id) {
@@ -225,19 +287,24 @@ export async function handleMcp(
   switch (message.method) {
     case 'initialize': {
       const protocolVersion = negotiatedVersion(message.params)
-      const subscription = profile === 'subscription-readonly'
+      const subscription = profile !== 'legacy'
+      const boundedWrite = profile === 'subscription-write-bounded'
       return rpcResponse(message.id, {
         protocolVersion,
         capabilities: { tools: { listChanged: false } },
         serverInfo: {
-          name: subscription ? 'bestcode-subscription-agent-gateway' : 'bestcode-repository-controller',
-          title: subscription ? 'BestCode Subscription Agent Gateway' : 'BestCode Repository Controller',
+          name: boundedWrite ? 'bestcode-bounded-write-agent-gateway' : subscription ? 'bestcode-subscription-agent-gateway' : 'bestcode-repository-controller',
+          title: boundedWrite ? 'BestCode Bounded Write' : subscription ? 'BestCode Read Only' : 'BestCode Repository Controller',
           version: '0.13.0',
-          description: subscription
+          description: boundedWrite
+            ? 'Authenticated task-scoped gateway for owner-approved bounded repository changes.'
+            : subscription
             ? 'Authenticated, project-scoped, provider-neutral read-only gateway for subscription coding agents.'
             : 'Project-scoped controller with Missions, Project Brain, approval-gated Git delivery, CI, deployment, and rollback requests.',
         },
-        instructions: subscription
+        instructions: boundedWrite
+          ? 'Operate only on the bound project, Mission task, branch, base SHA, paths, tools, and limits. Merge, deploy, rollback, secrets, approval, and arbitrary shell are unavailable.'
+          : subscription
           ? 'Use projects_list, brain_export_summary, repository reads, Mission reads, and handoff_packet_build. This endpoint cannot mutate repositories, approvals, deployments, or production.'
           : 'Use projects_list then project_context_get or mission_get. Work on agent/<task>, stage coherent changes, wait for owner approval, run CI, and create PRs.',
       }, { 'MCP-Protocol-Version': protocolVersion })
@@ -246,14 +313,22 @@ export async function handleMcp(
     case 'ping':
       return rpcResponse(message.id, {}, methodHeaders(effectiveRequest, 'ping'))
 
-    case 'tools/list':
-      return rpcResponse(message.id, { tools: gatewayTools(profile) }, methodHeaders(effectiveRequest, 'tools/list'))
+    case 'tools/list': {
+      const tools = gatewayTools(profile)
+      const advertised = principal.kind === 'bounded-write'
+        ? tools.filter((tool) => principal.allowed_tools.includes(tool.name))
+        : tools
+      return rpcResponse(message.id, { tools: advertised }, methodHeaders(effectiveRequest, 'tools/list'))
+    }
 
     case 'tools/call': {
       const name = typeof message.params?.name === 'string' ? message.params.name : ''
       const args = message.params?.arguments
       if (!name) return rpcError(message.id, -32602, 'Missing tool name')
       if (!isKnownGatewayTool(name)) return rpcError(message.id, -32602, `Unknown MCP tool: ${name}`)
+      if (principal.kind === 'bounded-write' && !principal.allowed_tools.includes(name)) {
+        return rpcError(message.id, -32001, 'Tool is outside credential scope', 403, { code: 'TOOL_SCOPE_DENIED' })
+      }
       if (args !== undefined && (!args || typeof args !== 'object' || Array.isArray(args))) {
         return rpcError(message.id, -32602, 'Tool arguments must be a JSON object')
       }
@@ -261,13 +336,53 @@ export async function handleMcp(
       const githubToken = resolveSecret(env, 'GITHUB_TOKEN')
       const context = gatewayContextFromRequest(effectiveRequest, profile, 'mcp')
       let result: GatewayToolResult
+      let effectiveArgs = (args as Record<string, unknown> | undefined) ?? {}
+      if (principal.kind === 'bounded-write') {
+        try {
+          effectiveArgs = boundedWriteArguments(principal, name, effectiveArgs)
+        } catch (error) {
+          return rpcError(message.id, -32001, 'Request is outside credential scope', 403, {
+            code: error instanceof Error ? error.message : 'BOUNDED_WRITE_SCOPE_DENIED',
+          })
+        }
+        if (BOUNDED_MUTATIONS.has(name)) {
+          const idempotencyKey = context.idempotency_key
+          if (!idempotencyKey) {
+            return rpcError(message.id, -32001, 'Idempotency-Key is required for bounded mutations', 400, {
+              code: 'IDEMPOTENCY_KEY_REQUIRED',
+            })
+          }
+          try {
+            const authorization = await authorizeBoundedWriteOperation(env, principal, {
+              tool: name,
+              idempotency_key: idempotencyKey,
+              ...boundedOperationCost(name, effectiveArgs),
+            })
+            if (authorization.replayed) {
+              return rpcResponse(message.id, {
+                content: [{ type: 'text', text: JSON.stringify({ ok: true, status: 'replayed', idempotency_key: idempotencyKey }) }],
+                structuredContent: {
+                  ok: true,
+                  status: 'replayed',
+                  idempotency: { provided: true, replayed: true, persisted: true },
+                  usage: authorization.usage,
+                },
+              }, methodHeaders(effectiveRequest, 'tools/call', name))
+            }
+          } catch (error) {
+            return rpcError(message.id, -32001, 'Bounded mutation authorization denied', 403, {
+              code: error instanceof Error ? error.message : 'BOUNDED_WRITE_OPERATION_DENIED',
+            })
+          }
+        }
+      }
       if (!githubToken) {
         result = missingGithubTokenResult(effectiveRequest, profile)
       } else {
         result = await executeGatewayTool(
           profile,
           name,
-          (args as Record<string, unknown> | undefined) ?? {},
+          effectiveArgs,
           githubToken,
           env,
           context,
@@ -297,14 +412,23 @@ export async function handleMcp(
         outcome: audit?.outcome ?? (result.isError ? 'failed' : 'completed'),
         denial_code: result.structuredContent.error?.code,
         auth_type: principal.kind,
-        ...(principal.kind === 'subscription' ? {
+        ...(principal.kind !== 'owner' ? {
           credential_id: principal.credential_id,
           project_id: principal.project_id,
           agent_id: principal.agent_id,
           provider: principal.provider,
           mcp_profile: principal.profile,
           credential_version: principal.credential_version,
-          tool_set_version: principal.tool_set_version,
+          ...('tool_set_version' in principal ? { tool_set_version: principal.tool_set_version } : {}),
+          ...('scope_hash' in principal ? {
+            mission_id: principal.mission_id,
+            task_id: principal.task_id,
+            attempt_id: principal.attempt_id,
+            lease_id: principal.lease_id,
+            fencing_token: principal.fencing_token,
+            branch: principal.branch,
+            scope_hash: principal.scope_hash,
+          } : {}),
         } : {}),
       }).catch((error) => {
         console.error('MCP audit persistence failed', error instanceof Error ? error.message : String(error))

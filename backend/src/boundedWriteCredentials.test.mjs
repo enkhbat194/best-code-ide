@@ -6,7 +6,11 @@ import {
   boundedWriteCredentialGet,
   boundedWriteCredentialRevoke,
   boundedWriteScopeHash,
+  authorizeBoundedWriteOperation,
 } from './boundedWriteCredentials.ts'
+import { authenticateRequest } from './authentication.ts'
+import { handleMcp } from './mcp.ts'
+import { executeSafeWriteMcpTool } from './mcpWriteTools.ts'
 import {
   BOUNDED_WRITE_PROFILE,
   DEFAULT_BOUNDED_WRITE_TTL_SECONDS,
@@ -37,6 +41,8 @@ function environment() {
   return {
     storage,
     env: {
+      GITHUB_TOKEN: 'test-github-token',
+      AUTH_TOKEN: 'test-owner-token',
       PROJECTS_JSON: JSON.stringify([
         { id: 'bestcode', name: 'BestCode', owner: 'enkhbat194', repo: 'best-code-ide', defaultBranch: 'main' },
       ]),
@@ -46,6 +52,21 @@ function environment() {
       },
     },
   }
+}
+
+function mcpRequest(secret, body, path = '/mcp/subscription?project_id=bestcode') {
+  return new Request(`https://bestcode.example${path}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${secret}`,
+      Accept: 'application/json, text/event-stream',
+      'Content-Type': 'application/json',
+      'MCP-Protocol-Version': '2025-11-25',
+      'X-BestCode-Agent-Id': 'spoofed-agent',
+      'X-BestCode-Agent-Provider': 'spoofed-provider',
+    },
+    body: JSON.stringify(body),
+  })
 }
 
 const baseInput = {
@@ -145,4 +166,178 @@ test('read-only profile remains exact and independent from bounded write profile
   assert.equal(subscriptionToolNames.length, 12)
   assert.equal(new Set(subscriptionToolNames).size, 12)
   assert.equal(subscriptionToolNames.some((name) => /write|patch|commit|push|create_branch/.test(name)), false)
+})
+
+test('authentication selects the stored bounded profile and authoritative identity', async () => {
+  const { env } = environment()
+  const issued = await boundedWriteCredentialCreate(env, baseInput, '2026-07-24T06:00:00.000Z')
+  const request = mcpRequest(issued.secret, { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} })
+  const authentication = await authenticateRequest(request, env, '2026-07-24T06:01:00.000Z')
+  assert.equal(authentication.attempted_kind, 'bounded-write')
+  assert.equal(authentication.principal?.kind, 'bounded-write')
+  assert.equal(authentication.principal?.agent_id, baseInput.agent_id)
+  assert.equal(authentication.principal?.provider, baseInput.provider)
+  assert.equal(authentication.principal?.branch, baseInput.branch)
+
+  const crossProject = await authenticateRequest(
+    mcpRequest(issued.secret, { jsonrpc: '2.0', id: 2, method: 'initialize' }, '/mcp/subscription?project_id=other'),
+    env,
+    '2026-07-24T06:01:00.000Z',
+  )
+  assert.equal(crossProject.principal, null)
+  assert.equal(crossProject.denial_code, 'INVALID_BOUNDED_WRITE_CREDENTIAL')
+})
+
+test('bounded MCP advertises only credential-allowed tools and excludes owner capabilities', async () => {
+  const { env } = environment()
+  const issued = await boundedWriteCredentialCreate(env, baseInput, '2026-07-24T06:00:00.000Z')
+  const request = mcpRequest(issued.secret, { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} })
+  const authentication = await authenticateRequest(request, env, '2026-07-24T06:01:00.000Z')
+  const response = await handleMcp(request, env, authentication.principal)
+  const body = await response.json()
+  const names = body.result.tools.map((tool) => tool.name)
+  assert.deepEqual(names.sort(), baseInput.allowed_tools.slice().sort())
+  for (const forbidden of [
+    'repository_delete_branch', 'repository_delete_file', 'deployment_start',
+    'rollback_request', 'approval_decide', 'subscription_credential_create',
+  ]) assert.equal(names.includes(forbidden), false)
+  for (const tool of body.result.tools) assert.ok(tool.description.length <= 300)
+})
+
+test('bounded MCP rejects tool, branch, project, and path widening before execution', async () => {
+  const { env } = environment()
+  const issued = await boundedWriteCredentialCreate(env, baseInput, '2026-07-24T06:00:00.000Z')
+  const principal = (await authenticateRequest(
+    mcpRequest(issued.secret, { jsonrpc: '2.0', id: 1, method: 'initialize' }),
+    env,
+    '2026-07-24T06:01:00.000Z',
+  )).principal
+
+  const cases = [
+    {
+      name: 'deployment_start',
+      args: { project_id: 'bestcode' },
+      code: 'TOOL_SCOPE_DENIED',
+    },
+    {
+      name: 'repository_write_file',
+      args: { project_id: 'other', branch: baseInput.branch, path: 'docs/smoke/a.md', content: 'safe' },
+      code: 'PROJECT_SCOPE_DENIED',
+    },
+    {
+      name: 'repository_write_file',
+      args: { project_id: 'bestcode', branch: 'agent/other', path: 'docs/smoke/a.md', content: 'safe' },
+      code: 'BRANCH_SCOPE_DENIED',
+    },
+    {
+      name: 'repository_write_file',
+      args: { project_id: 'bestcode', branch: baseInput.branch, path: '.github/workflows/evil.yml', content: 'safe' },
+      code: 'PROTECTED_PATH_DENIED',
+    },
+    {
+      name: 'repository_write_file',
+      args: { project_id: 'bestcode', branch: baseInput.branch, path: 'backend/src/index.ts', content: 'safe' },
+      code: 'PATH_SCOPE_DENIED',
+    },
+  ]
+  for (const [index, item] of cases.entries()) {
+    const response = await handleMcp(
+      mcpRequest(issued.secret, {
+        jsonrpc: '2.0',
+        id: index + 10,
+        method: 'tools/call',
+        params: { name: item.name, arguments: item.args },
+      }),
+      env,
+      principal,
+    )
+    const body = await response.json()
+    assert.equal(body.error.data.code, item.code)
+  }
+})
+
+test('operation accounting is atomic, idempotent, and fails closed at every limit', async () => {
+  const { env } = environment()
+  const issued = await boundedWriteCredentialCreate(env, {
+    ...baseInput,
+    limits: {
+      max_operations: 2,
+      max_changed_files: 1,
+      max_total_changed_bytes: 10,
+      max_commits: 1,
+      max_pushes: 1,
+      max_pull_requests: 1,
+    },
+  })
+  const principal = {
+    kind: 'bounded-write',
+    ...issued.credential,
+  }
+  delete principal.status
+  delete principal.issued_at
+
+  const first = await authorizeBoundedWriteOperation(env, principal, {
+    tool: 'repository_write_file',
+    idempotency_key: 'write-1',
+    changed_files: 1,
+    changed_bytes: 10,
+  })
+  assert.equal(first.replayed, false)
+  assert.equal(first.usage.operations, 1)
+  assert.equal(first.usage.changed_files, 1)
+
+  const replay = await authorizeBoundedWriteOperation(env, principal, {
+    tool: 'repository_write_file',
+    idempotency_key: 'write-1',
+    changed_files: 1,
+    changed_bytes: 10,
+  })
+  assert.equal(replay.replayed, true)
+  assert.deepEqual(replay.usage, first.usage)
+
+  await assert.rejects(
+    authorizeBoundedWriteOperation(env, principal, {
+      tool: 'repository_write_file',
+      idempotency_key: 'write-2',
+      changed_files: 1,
+    }),
+    /OPERATION_LIMIT_EXCEEDED/,
+  )
+  await assert.rejects(
+    authorizeBoundedWriteOperation(env, principal, {
+      tool: 'deployment_start',
+      idempotency_key: 'deploy-1',
+    }),
+    /TOOL_SCOPE_DENIED/,
+  )
+})
+
+test('branch creation checks the approved base SHA before creating a ref', async (t) => {
+  const { env } = environment()
+  const originalFetch = globalThis.fetch
+  let createCalls = 0
+  globalThis.fetch = async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init)
+    const url = new URL(request.url)
+    if (request.method === 'GET' && url.pathname.endsWith('/branches/main')) {
+      return new Response(JSON.stringify({
+        name: 'main',
+        protected: true,
+        commit: { sha: 'different-main-sha' },
+      }), { headers: { 'Content-Type': 'application/json' } })
+    }
+    if (request.method === 'POST') createCalls += 1
+    throw new Error(`Unexpected GitHub request: ${request.method} ${request.url}`)
+  }
+  t.after(() => { globalThis.fetch = originalFetch })
+
+  const result = await executeSafeWriteMcpTool('repository_create_branch', {
+    project_id: 'bestcode',
+    name: baseInput.branch,
+    from_branch: 'main',
+    expected_base_sha: baseInput.base_sha,
+  }, 'test-github-token', env)
+  assert.equal(result.structuredContent.ok, false)
+  assert.match(result.structuredContent.error.message, /CONTEXT_CONFLICT/)
+  assert.equal(createCalls, 0)
 })

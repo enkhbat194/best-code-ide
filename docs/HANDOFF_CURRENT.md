@@ -33,3 +33,15 @@ GitHub repository `enkhbat194/best-code-ide` доторх `docs/HANDOFF_CURRENT.
 - Backend TypeScript typecheck: passed.
 - Full backend suite: 184 passed; one pre-existing Windows-only test harness failure because local `bash` is unavailable (`typecheckPipeline.test.mjs`). Linux CI contract is unchanged.
 - Next: Package B authentication, bounded tool advertisement, repository mutation enforcement, usage/idempotency accounting, and safety tests.
+
+## Chat 11 package B checkpoint
+
+- Credential authentication now selects `subscription-write-bounded` from the stored record; request parameters cannot select or widen it.
+- MCP title is `BestCode Bounded Write`; tools/list is intersected with the credential allowlist.
+- Merge, deploy, rollback, deletion, approval, credential administration, secrets, and arbitrary shell are absent.
+- Project, exact branch, protected/allowed path, base SHA, branch-head SHA, and expected old-file hash checks fail before mutation.
+- Every bounded mutation requires an `Idempotency-Key`.
+- Durable authorization atomically reserves operation/file/byte/commit/push/PR usage before execution; replay does not execute the mutation again.
+- Targeted Package B plus read-only, branch, and Mission lease regressions: 37 passed.
+- Backend TypeScript typecheck: passed.
+- Next: Package C owner write-task approval, live Mission/attempt/lease validation on issue and every mutation, owner API/OpenAPI, progress/result/audit integration, and automatic revoke on terminal execution state.

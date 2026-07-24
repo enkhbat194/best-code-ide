@@ -9,7 +9,7 @@ import { executeProjectBrainMcpTool, projectBrainMcpTools } from './projectBrain
 import { executeSubscriptionTool, subscriptionMcpTools } from './subscriptionTools'
 import type { Env } from './types'
 
-export type GatewayProfile = 'legacy' | 'subscription-readonly'
+export type GatewayProfile = 'legacy' | 'subscription-readonly' | 'subscription-write-bounded'
 export type ToolSafetyClass = 'read-only' | 'write-without-approval' | 'approval-required' | 'irreversible'
 
 interface ToolAnnotations {
@@ -64,10 +64,28 @@ const legacyToolSources = [
 
 export const legacyGatewayTools: readonly GatewayTool[] = legacyToolSources as unknown as readonly GatewayTool[]
 export const subscriptionGatewayTools: readonly GatewayTool[] = subscriptionMcpTools as unknown as readonly GatewayTool[]
+const BOUNDED_MUTATION_TOOL_NAMES = new Set([
+  'repository_create_branch',
+  'repository_write_file',
+  'repository_apply_patch',
+  'repository_commit',
+  'repository_push',
+  'repository_create_pull_request',
+  'build_start',
+  'build_status',
+  'test_start',
+  'test_status',
+  'task_get',
+])
+export const boundedWriteGatewayTools: readonly GatewayTool[] = [
+  ...subscriptionGatewayTools,
+  ...legacyGatewayTools.filter((tool) => BOUNDED_MUTATION_TOOL_NAMES.has(tool.name)),
+]
 
 const legacyToolMap = new Map(legacyGatewayTools.map((tool) => [tool.name, tool]))
 const subscriptionToolMap = new Map(subscriptionGatewayTools.map((tool) => [tool.name, tool]))
-const allKnownNames = new Set([...legacyToolMap.keys(), ...subscriptionToolMap.keys()])
+const boundedWriteToolMap = new Map(boundedWriteGatewayTools.map((tool) => [tool.name, tool]))
+const allKnownNames = new Set([...legacyToolMap.keys(), ...subscriptionToolMap.keys(), ...boundedWriteToolMap.keys()])
 
 const READ_ONLY_NAMES = new Set<string>(readOnlyMcpTools.map((tool) => tool.name))
 const SAFE_WRITE_NAMES = new Set<string>(safeWriteMcpTools.map((tool) => tool.name))
@@ -135,13 +153,19 @@ function withSafetyMetadata(tool: GatewayTool): GatewayTool {
 }
 
 export function gatewayTools(profile: GatewayProfile): GatewayTool[] {
-  const tools = profile === 'subscription-readonly' ? subscriptionGatewayTools : legacyGatewayTools
+  const tools = profile === 'subscription-readonly'
+    ? subscriptionGatewayTools
+    : profile === 'subscription-write-bounded'
+      ? boundedWriteGatewayTools
+      : legacyGatewayTools
   return tools.map(withSafetyMetadata)
 }
 
 export function gatewayTool(profile: GatewayProfile, name: string): GatewayTool | undefined {
   const tool = profile === 'subscription-readonly'
     ? subscriptionToolMap.get(name)
+    : profile === 'subscription-write-bounded'
+      ? boundedWriteToolMap.get(name)
     : legacyToolMap.get(name)
   return tool ? withSafetyMetadata(tool) : undefined
 }
@@ -367,6 +391,8 @@ export async function executeGatewayTool(
         : `Unknown BestCode tool: ${name}`,
       profile === 'subscription-readonly'
         ? 'Use tools/list. Subscription gateways expose read-only tools only.'
+        : profile === 'subscription-write-bounded'
+          ? 'Use tools/list. Bounded write credentials expose only task-scoped repository tools.'
         : 'Use tools/list and call an advertised tool.',
       context,
       name,
@@ -385,7 +411,7 @@ export async function executeGatewayTool(
     )
   }
 
-  if (profile === 'subscription-readonly' && !context.project_scope) {
+  if (profile !== 'legacy' && !context.project_scope) {
     return errorResult(
       'PROJECT_SCOPE_REQUIRED',
       'Subscription MCP requires project_id in the gateway URL.',
@@ -398,10 +424,10 @@ export async function executeGatewayTool(
 
   try {
     validateRepositoryArguments(args)
-    if (profile === 'subscription-readonly') validatePermissionClaims(args)
+    if (profile !== 'legacy') validatePermissionClaims(args)
 
     if (
-      profile === 'subscription-readonly' &&
+      profile !== 'legacy' &&
       name !== 'projects_list' &&
       args.project_id !== context.project_scope
     ) {
@@ -419,6 +445,8 @@ export async function executeGatewayTool(
     const result = await withTimeout(
       profile === 'subscription-readonly'
         ? executeSubscriptionTool(name, args, token, env, context.project_scope!)
+        : profile === 'subscription-write-bounded' && subscriptionToolMap.has(name)
+          ? executeSubscriptionTool(name, args, token, env, context.project_scope!)
         : executeLegacyTool(name, args, token, env, context),
       context.timeout_ms,
     )

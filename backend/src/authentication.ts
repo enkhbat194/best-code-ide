@@ -1,4 +1,8 @@
 import { authenticateScopedCredential, looksLikeScopedCredential } from './subscriptionCredentials'
+import {
+  authenticateBoundedWriteCredential,
+  looksLikeBoundedWriteCredential,
+} from './boundedWriteCredentials'
 import { SUBSCRIPTION_PROFILE, type AuthenticationResult } from './subscriptionCredentialTypes'
 import type { Env } from './types'
 import { resolveSecret } from './utils'
@@ -27,7 +31,7 @@ export async function isAuthorized(req: Request, env: Pick<Env, 'AUTH_TOKEN'>): 
   const bearer = bearerToken(req)
   const candidate = bearer || ownerQueryKey(req)
   const expected = resolveSecret(env, 'AUTH_TOKEN')
-  if (!candidate || !expected || looksLikeScopedCredential(candidate)) return false
+  if (!candidate || !expected || looksLikeScopedCredential(candidate) || looksLikeBoundedWriteCredential(candidate)) return false
   return constantTimeSecretEqual(candidate, expected)
 }
 
@@ -35,6 +39,17 @@ export async function authenticateRequest(req: Request, env: Env, now?: string):
   const url = new URL(req.url)
   const bearer = bearerToken(req)
   const queryKey = ownerQueryKey(req)
+
+  if (bearer && looksLikeBoundedWriteCredential(bearer)) {
+    const principal = await authenticateBoundedWriteCredential(env, bearer, {
+      endpoint: url.pathname,
+      project_id: url.searchParams.get('project_id') ?? '',
+      ...(now ? { now } : {}),
+    })
+    return principal
+      ? { principal, attempted_kind: 'bounded-write' }
+      : { principal: null, attempted_kind: 'bounded-write', denial_code: 'INVALID_BOUNDED_WRITE_CREDENTIAL' }
+  }
 
   if (bearer && looksLikeScopedCredential(bearer)) {
     const principal = await authenticateScopedCredential(env, bearer, {
@@ -48,8 +63,10 @@ export async function authenticateRequest(req: Request, env: Env, now?: string):
       : { principal: null, attempted_kind: 'subscription', denial_code: 'INVALID_SCOPED_CREDENTIAL' }
   }
 
-  if (queryKey && looksLikeScopedCredential(queryKey)) {
-    return { principal: null, attempted_kind: 'subscription', denial_code: 'INVALID_SCOPED_CREDENTIAL' }
+  if (queryKey && (looksLikeScopedCredential(queryKey) || looksLikeBoundedWriteCredential(queryKey))) {
+    return looksLikeBoundedWriteCredential(queryKey)
+      ? { principal: null, attempted_kind: 'bounded-write', denial_code: 'INVALID_BOUNDED_WRITE_CREDENTIAL' }
+      : { principal: null, attempted_kind: 'subscription', denial_code: 'INVALID_SCOPED_CREDENTIAL' }
   }
 
   const candidate = bearer || queryKey

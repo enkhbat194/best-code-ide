@@ -58,10 +58,12 @@ export interface SubscriptionPrincipal {
   expires_at: string
 }
 
-export type RequestPrincipal = OwnerPrincipal | SubscriptionPrincipal
+import type { BoundedWritePrincipal } from './boundedWriteCredentialTypes'
+
+export type RequestPrincipal = OwnerPrincipal | SubscriptionPrincipal | BoundedWritePrincipal
 
 export interface AuthenticationResult {
   principal: RequestPrincipal | null
-  attempted_kind: 'owner' | 'subscription' | 'none'
-  denial_code?: 'AUTHENTICATION_REQUIRED' | 'INVALID_OWNER_CREDENTIAL' | 'INVALID_SCOPED_CREDENTIAL'
+  attempted_kind: 'owner' | 'subscription' | 'bounded-write' | 'none'
+  denial_code?: 'AUTHENTICATION_REQUIRED' | 'INVALID_OWNER_CREDENTIAL' | 'INVALID_SCOPED_CREDENTIAL' | 'INVALID_BOUNDED_WRITE_CREDENTIAL'
 }

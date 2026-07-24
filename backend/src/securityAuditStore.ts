@@ -11,6 +11,8 @@ import {
   BOUNDED_WRITE_CREDENTIAL_SCHEMA_VERSION,
   BOUNDED_WRITE_CREDENTIAL_VERSION,
   BOUNDED_WRITE_PROFILE,
+  boundedWriteCredentialStatus,
+  boundedWriteScopePayload,
   publicBoundedWriteCredential,
   type BoundedWriteCredentialRecord,
 } from './boundedWriteCredentialTypes'
@@ -47,6 +49,10 @@ function credentialKey(credentialId: string): string {
 
 function boundedWriteCredentialKey(credentialId: string): string {
   return `${BOUNDED_WRITE_CREDENTIAL_PREFIX}${credentialId}`
+}
+
+function boundedWriteIdempotencyKey(credentialId: string, namespace: string, key: string): string {
+  return `bounded-write-idempotency:${credentialId}:${namespace}:${key}`
 }
 
 function cleanString(value: unknown, max: number): string | undefined {
@@ -154,6 +160,11 @@ function normalizeCredentialRecord(value: unknown): SubscriptionCredentialRecord
     audit_metadata: auditMetadata as SubscriptionCredentialRecord['audit_metadata'],
     secret_hash: secretHash.toLowerCase(),
   }
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
+  return [...new Uint8Array(digest)].map((item) => item.toString(16).padStart(2, '0')).join('')
 }
 
 function normalizeBoundedWriteCredentialRecord(value: unknown): BoundedWriteCredentialRecord | null {
@@ -286,7 +297,34 @@ export class SecurityAuditStore {
       return json({ credential: publicBoundedWriteCredential(record, record.issued_at) }, 201)
     }
 
-    const boundedWriteMatch = url.pathname.match(/^\/bounded-write-credentials\/([a-f0-9-]{36})(?:\/(revoke))?$/i)
+    if (request.method === 'POST' && url.pathname === '/bounded-write-credentials/authenticate') {
+      const input = await request.json().catch(() => null) as Record<string, unknown> | null
+      const credentialId = cleanString(input?.credential_id, 64) ?? ''
+      const presentedHash = cleanString(input?.presented_hash, 64) ?? DUMMY_SECRET_HASH
+      const endpoint = cleanString(input?.endpoint, 200) ?? ''
+      const projectId = cleanString(input?.project_id, 64) ?? ''
+      const now = safeNow(input?.now)
+      const record = credentialId
+        ? await this.state.storage.get<BoundedWriteCredentialRecord>(boundedWriteCredentialKey(credentialId))
+        : undefined
+      const scopeHash = record
+        ? await sha256Hex(JSON.stringify(boundedWriteScopePayload(record)))
+        : DUMMY_SECRET_HASH
+      const valid = Boolean(
+        record &&
+        constantTimeHexEqual(record.secret_hash, presentedHash) &&
+        constantTimeHexEqual(record.scope_hash, scopeHash) &&
+        boundedWriteCredentialStatus(record, now) === 'active' &&
+        endpoint === '/mcp/subscription' &&
+        projectId === record.project_id &&
+        record.profile === BOUNDED_WRITE_PROFILE,
+      )
+      if (!valid || !record) return json({ ok: false, code: 'INVALID_BOUNDED_WRITE_CREDENTIAL' }, 401)
+      const { secret_hash: _secretHash, issued_at: _issuedAt, revoked_at: _revokedAt, ...principal } = record
+      return json({ ok: true, principal })
+    }
+
+    const boundedWriteMatch = url.pathname.match(/^\/bounded-write-credentials\/([a-f0-9-]{36})(?:\/(revoke|authorize-operation))?$/i)
     if (boundedWriteMatch) {
       const key = boundedWriteCredentialKey(boundedWriteMatch[1])
       const record = await this.state.storage.get<BoundedWriteCredentialRecord>(key)
@@ -299,6 +337,56 @@ export class SecurityAuditStore {
         const updated = { ...record, revoked_at: revokedAt }
         await this.state.storage.put(key, updated)
         return json({ credential: publicBoundedWriteCredential(updated, revokedAt) })
+      }
+      if (request.method === 'POST' && boundedWriteMatch[2] === 'authorize-operation') {
+        const input = await request.json().catch(() => null) as Record<string, unknown> | null
+        const now = safeNow(input?.now)
+        if (boundedWriteCredentialStatus(record, now) !== 'active') return json({ code: 'CREDENTIAL_INACTIVE' }, 403)
+        const scopeHash = cleanString(input?.scope_hash, 64) ?? ''
+        if (!constantTimeHexEqual(record.scope_hash, scopeHash)) return json({ code: 'SCOPE_HASH_MISMATCH' }, 403)
+        const tool = cleanString(input?.tool, 200) ?? ''
+        if (!record.allowed_tools.includes(tool)) return json({ code: 'TOOL_SCOPE_DENIED' }, 403)
+        const idempotencyKey = cleanString(input?.idempotency_key, 128) ?? ''
+        if (!idempotencyKey) return json({ code: 'IDEMPOTENCY_KEY_REQUIRED' }, 400)
+        const replayKey = boundedWriteIdempotencyKey(record.credential_id, record.idempotency_namespace, idempotencyKey)
+        const replay = await this.state.storage.get<{ tool: string; usage: BoundedWriteCredentialRecord['usage'] }>(replayKey)
+        if (replay) {
+          if (replay.tool !== tool) return json({ code: 'IDEMPOTENCY_KEY_CONFLICT' }, 409)
+          return json({ ok: true, replayed: true, usage: replay.usage })
+        }
+        const integer = (key: string) => {
+          const value = Number(input?.[key] ?? 0)
+          return Number.isSafeInteger(value) && value >= 0 ? value : -1
+        }
+        const delta = {
+          operations: 1,
+          changed_files: integer('changed_files'),
+          total_changed_bytes: integer('changed_bytes'),
+          commits: integer('commits'),
+          pushes: integer('pushes'),
+          pull_requests: integer('pull_requests'),
+        }
+        if (Object.values(delta).some((value) => value < 0)) return json({ code: 'INVALID_OPERATION_DELTA' }, 400)
+        const nextUsage = {
+          operations: record.usage.operations + delta.operations,
+          changed_files: record.usage.changed_files + delta.changed_files,
+          total_changed_bytes: record.usage.total_changed_bytes + delta.total_changed_bytes,
+          commits: record.usage.commits + delta.commits,
+          pushes: record.usage.pushes + delta.pushes,
+          pull_requests: record.usage.pull_requests + delta.pull_requests,
+        }
+        const exceeded =
+          nextUsage.operations > record.limits.max_operations ||
+          nextUsage.changed_files > record.limits.max_changed_files ||
+          nextUsage.total_changed_bytes > record.limits.max_total_changed_bytes ||
+          nextUsage.commits > record.limits.max_commits ||
+          nextUsage.pushes > record.limits.max_pushes ||
+          nextUsage.pull_requests > record.limits.max_pull_requests
+        if (exceeded) return json({ code: 'OPERATION_LIMIT_EXCEEDED', usage: record.usage, limits: record.limits }, 403)
+        const updated = { ...record, usage: nextUsage }
+        await this.state.storage.put(key, updated)
+        await this.state.storage.put(replayKey, { tool, usage: nextUsage })
+        return json({ ok: true, replayed: false, usage: nextUsage })
       }
     }
 

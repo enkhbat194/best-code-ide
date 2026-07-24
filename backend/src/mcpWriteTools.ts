@@ -467,6 +467,12 @@ export async function executeSafeWriteMcpTool(
       validateWorkingBranch(branchName)
       if (!branchName.startsWith('agent/')) throw new Error('INVALID_BRANCH: working branches must use the agent/<task> prefix')
       const from = typeof args.from_branch === 'string' && args.from_branch.trim() ? args.from_branch.trim() : project.defaultBranch
+      if (typeof args.expected_base_sha === 'string' && args.expected_base_sha.trim()) {
+        const source = await gh.getBranch(token, project.owner, project.repo, from)
+        if (!source || source.sha !== args.expected_base_sha.trim().toLowerCase()) {
+          throw new Error(`CONTEXT_CONFLICT: ${from} does not match expected base SHA`)
+        }
+      }
       const created = await gh.createBranch(token, project.owner, project.repo, branchName, from)
       return finish({
         ok: true,
@@ -589,11 +595,20 @@ export async function executeSafeWriteMcpTool(
     branch = requireString(args, 'branch')
     validateWorkingBranch(branch)
     const path = normalizePath(requireString(args, 'path'))
+    if (typeof args.expected_branch_head_sha === 'string' && args.expected_branch_head_sha.trim()) {
+      const currentBranch = await gh.getBranch(token, project.owner, project.repo, branch)
+      if (!currentBranch || currentBranch.sha !== args.expected_branch_head_sha.trim().toLowerCase()) {
+        throw new Error(`CONTEXT_CONFLICT: ${branch} head does not match expected SHA`)
+      }
+    }
 
     if (name === 'repository_write_file') {
       const content = typeof args.content === 'string' ? args.content : ''
       if (content.length > MAX_FILE_CHARS) throw new Error(`content exceeds the ${MAX_FILE_CHARS} character limit`)
       const existing = await gh.getFile(token, project.owner, project.repo, path, branch)
+      if (typeof args.expected_old_hash === 'string' && args.expected_old_hash !== (existing?.sha ?? 'absent')) {
+        throw new Error(`BASE_CONFLICT: ${path} does not match expected old hash`)
+      }
       if (existing?.content === content) throw new Error('INVALID_ARGUMENT: proposed content is identical to the branch content')
       const action: StagedChange['action'] = existing ? 'update' : 'create'
       const diff = createUnifiedDiff(path, existing?.content ?? null, content)
@@ -610,6 +625,9 @@ export async function executeSafeWriteMcpTool(
     if (name === 'repository_apply_patch') {
       const patch = requireString(args, 'patch')
       const existing = await gh.getFile(token, project.owner, project.repo, path, branch)
+      if (typeof args.expected_old_hash === 'string' && args.expected_old_hash !== (existing?.sha ?? 'absent')) {
+        throw new Error(`BASE_CONFLICT: ${path} does not match expected old hash`)
+      }
       if (!existing) throw new Error(`File not found: ${path}`)
       const applied = applyUnifiedPatch(existing.content, patch, path)
       if (applied.content === existing.content) throw new Error('INVALID_ARGUMENT: patch produces no content change')

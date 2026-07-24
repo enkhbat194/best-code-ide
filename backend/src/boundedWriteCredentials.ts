@@ -14,6 +14,7 @@ import {
   boundedWriteScopePayload,
   type BoundedWriteCredentialRecord,
   type BoundedWriteLimits,
+  type BoundedWritePrincipal,
   type PublicBoundedWriteCredential,
 } from './boundedWriteCredentialTypes'
 
@@ -185,4 +186,73 @@ export async function boundedWriteCredentialRevoke(env: Env, credentialId: strin
     method: 'POST',
   })
   return payload.credential as PublicBoundedWriteCredential
+}
+
+export function looksLikeBoundedWriteCredential(value: string): boolean {
+  return value.startsWith(`${BOUNDED_WRITE_CREDENTIAL_PREFIX}.`)
+}
+
+export function parseBoundedWriteCredential(value: string): { credential_id: string } | null {
+  const match = value.match(/^bcwrite_v1\.([a-f0-9-]{36})\.([A-Za-z0-9_-]{32,128})$/i)
+  return match ? { credential_id: match[1].toLowerCase() } : null
+}
+
+export async function authenticateBoundedWriteCredential(
+  env: Env,
+  rawCredential: string,
+  options: { endpoint: string; project_id: string; now?: string },
+): Promise<BoundedWritePrincipal | null> {
+  const parsed = parseBoundedWriteCredential(rawCredential)
+  const response = await storeStub(env).fetch('https://security-audit-store/bounded-write-credentials/authenticate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      credential_id: parsed?.credential_id ?? '00000000-0000-0000-0000-000000000000',
+      presented_hash: await sha256Hex(rawCredential),
+      endpoint: options.endpoint,
+      project_id: options.project_id,
+      ...(options.now ? { now: new Date(options.now).toISOString() } : {}),
+    }),
+  })
+  const payload = await response.json().catch(() => null) as { ok?: boolean; principal?: Omit<BoundedWritePrincipal, 'kind'> } | null
+  return response.ok && payload?.ok === true && payload.principal
+    ? { kind: 'bounded-write', ...payload.principal }
+    : null
+}
+
+export async function authorizeBoundedWriteOperation(
+  env: Env,
+  principal: BoundedWritePrincipal,
+  input: {
+    tool: string
+    idempotency_key: string
+    changed_files?: number
+    changed_bytes?: number
+    commits?: number
+    pushes?: number
+    pull_requests?: number
+    now?: string
+  },
+): Promise<{ replayed: boolean; usage: BoundedWritePrincipal['usage'] }> {
+  const response = await storeStub(env).fetch(
+    `https://security-audit-store/bounded-write-credentials/${encodeURIComponent(principal.credential_id)}/authorize-operation`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        scope_hash: principal.scope_hash,
+        tool: input.tool,
+        idempotency_key: input.idempotency_key,
+        changed_files: input.changed_files ?? 0,
+        changed_bytes: input.changed_bytes ?? 0,
+        commits: input.commits ?? 0,
+        pushes: input.pushes ?? 0,
+        pull_requests: input.pull_requests ?? 0,
+        ...(input.now ? { now: input.now } : {}),
+      }),
+    },
+  )
+  const payload = await response.json().catch(() => null) as Record<string, any> | null
+  if (!response.ok) throw new Error(typeof payload?.code === 'string' ? payload.code : 'BOUNDED_WRITE_OPERATION_DENIED')
+  return { replayed: payload?.replayed === true, usage: payload?.usage as BoundedWritePrincipal['usage'] }
 }

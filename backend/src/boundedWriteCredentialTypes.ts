@@ -64,6 +64,7 @@ export type PublicBoundedWriteCredential = Omit<BoundedWriteCredentialRecord, 's
 
 export interface BoundedWritePrincipal {
   kind: 'bounded-write'
+  credential_version: typeof BOUNDED_WRITE_CREDENTIAL_VERSION
   credential_id: string
   project_id: string
   mission_id: string
