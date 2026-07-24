@@ -1,22 +1,25 @@
 name: Apply bounded OpenAI Brain smoke patch
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/bound-openai-brain-smoke
-    paths:
-      - .github/workflows/patch-bound-openai-brain-smoke.yml
+      - main
+    types:
+      - opened
+      - reopened
 
 permissions:
   contents: write
 
 jobs:
   patch:
+    if: ${{ github.head_ref == 'agent/bound-openai-brain-smoke' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: agent/bound-openai-brain-smoke
+          token: ${{ github.token }}
       - name: Bound Brain export smoke and add regression assertion
         shell: bash
         run: |
