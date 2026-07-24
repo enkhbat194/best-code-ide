@@ -88,7 +88,10 @@ assignment, task lease/fencing token, immutable Attempt, append-only progress, e
 Result, Blocker, Retry, Cancellation болон Closeout contract нэмсэн.
 
 Owner/full MCP registry нь 7 read, 10 controlled mutation, 3 owner-only operation schema-г
-advertise хийнэ. Durable execution store migration идэвхжээгүй тул mutation executor fail-closed.
+advertise хийж, durable executor руу dispatch хийнэ. Existing `APPROVALS` Durable Object namespace
+доторх transaction-backed aggregate нь optimistic version, idempotency replay, lease fencing,
+append-only audit, approval gate-ийг authoritative байдлаар хадгална. Иймээс тусдаа binding эсвэл
+storage migration шаардахгүй. Authenticated REST facade нь ижил aggregate-ийг ашиглана.
 Одоогийн `subscription-readonly-v1` profile exact 12 read-only tool хэвээр; write-capable credential
 нээхгүй. Merge/deploy/rollback автомат биш бөгөөд owner approval boundary өөрчлөгдөөгүй.
 
