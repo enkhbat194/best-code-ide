@@ -63,6 +63,11 @@ function fakeProduction({ agentName, provider, failTool = '' }) {
       } } })
     }
     if (request.params.name === 'brain_export_summary') {
+      assert.deepEqual(request.params.arguments, {
+      project_id: 'bestcode',
+      max_chars_per_document: 1000,
+      max_total_document_chars: 5000,
+    })
       return response({ jsonrpc: '2.0', id: request.id, result: { structuredContent: {
         ok: true, result: { current_mission: { mission_id: '22222222-2222-2222-2222-222222222222' } },
       } } })
