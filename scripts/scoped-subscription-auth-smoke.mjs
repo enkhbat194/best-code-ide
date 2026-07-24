@@ -75,8 +75,77 @@ async function rpc(fetchImpl, url, token, id, method, params, expectedStatus = 2
 
 function successfulEnvelope(call, name) {
   const envelope = call.body?.result?.structuredContent
-  if (envelope?.ok !== true) throw new Error(`${name} did not return a successful structured result`)
+  if (envelope?.ok !== true) {
+    const code = text(envelope?.error?.code, 120)
+    throw new Error(`${name} did not return a successful structured result${code ? ` (${code})` : ''}`)
+  }
   return envelope
+}
+
+function activeSmokeCredential(item, { projectId, agentName, provider }) {
+  return item?.project_id === projectId
+    && item?.subject_agent_id === agentName
+    && item?.agent_provider === provider
+    && item?.status === 'active'
+}
+
+async function revokeCredential(fetchImpl, base, ownerToken, credentialId, attempts = 3) {
+  let lastError
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      await requestJson(fetchImpl, new URL(`/api/subscription/credentials/${credentialId}/revoke`, base), {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${ownerToken}` },
+      }, 200)
+      return
+    } catch (error) {
+      lastError = error
+      if (attempt < attempts) await new Promise((resolvePromise) => setTimeout(resolvePromise, attempt * 250))
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('Credential revoke failed')
+}
+
+function smokeEvidence({
+  schemaVersion,
+  checkedAt,
+  endpoint,
+  projectId,
+  credentialId,
+  agentName,
+  provider,
+  checks,
+  staleCredentialsRevoked,
+  status,
+  failedStage,
+  error,
+  credentialRevoked,
+}) {
+  const evidence = sanitize({
+    schema_version: schemaVersion,
+    checked_at: checkedAt,
+    endpoint: endpoint.toString(),
+    project_id: projectId,
+    credential_id: credentialId,
+    agent_id: agentName,
+    provider,
+    checks,
+    stale_smoke_credentials_revoked: staleCredentialsRevoked,
+    raw_credential_persisted: false,
+    raw_mcp_response_contains_credential: false,
+    production_mutation: 'credential-created-then-revoked-only',
+    status,
+    ...(failedStage ? { failed_stage: failedStage } : {}),
+    ...(error ? { error: { message: text(error instanceof Error ? error.message : String(error), 500), credential_revoked: credentialRevoked } } : {}),
+  })
+  assertNoScopedSecret(evidence)
+  return evidence
+}
+
+function failureWithEvidence(error, evidence) {
+  const failure = new Error(text(error instanceof Error ? error.message : String(error), 500) || 'Scoped subscription smoke failed')
+  failure.evidence = evidence
+  return failure
 }
 
 export async function runScopedSubscriptionAuthSmoke({
@@ -96,11 +165,38 @@ export async function runScopedSubscriptionAuthSmoke({
   const cleanSchemaVersion = identifier(evidenceSchemaVersion, 'evidenceSchemaVersion', 'bestcode-scoped-subscription-auth-smoke-v1', 120)
   const base = new URL(backendUrl)
   const credentialApi = new URL('/api/subscription/credentials', base)
+  const endpoint = new URL('/mcp/subscription', base)
+  endpoint.searchParams.set('project_id', projectId)
   let credentialId = ''
   let scopedToken = ''
+  let credentialRevoked = false
+  let staleCredentialsRevoked = 0
+  let currentStage = 'stale_credential_cleanup'
+  let failedStage = ''
+  let failure = null
   const checks = []
 
   try {
+    const listed = await requestJson(fetchImpl, new URL(`/api/subscription/credentials?project_id=${encodeURIComponent(projectId)}`, base), {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${ownerToken}` },
+    }, 200)
+    const stale = Array.isArray(listed.body?.items)
+      ? listed.body.items.filter((item) => activeSmokeCredential(item, {
+        projectId,
+        agentName: cleanAgentName,
+        provider: cleanProvider,
+      }))
+      : []
+    for (const item of stale) {
+      const staleId = text(item?.credential_id, 80)
+      if (!staleId) throw new Error('Active stale smoke credential is missing credential_id')
+      await revokeCredential(fetchImpl, base, ownerToken, staleId)
+      staleCredentialsRevoked += 1
+    }
+    checks.push('stale_credential_cleanup')
+
+    currentStage = 'credential_create'
     const created = await requestJson(fetchImpl, credentialApi, {
       method: 'POST',
       headers: {
@@ -121,8 +217,7 @@ export async function runScopedSubscriptionAuthSmoke({
     if (!credentialId || !/^bcsub_v1\./.test(scopedToken)) throw new Error('Credential creation response is invalid')
     checks.push('credential_created_once')
 
-    const endpoint = new URL('/mcp/subscription', base)
-    endpoint.searchParams.set('project_id', projectId)
+    currentStage = 'initialize'
     const initialized = await rpc(fetchImpl, endpoint, scopedToken, 1, 'initialize', {
       protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: {},
@@ -131,16 +226,18 @@ export async function runScopedSubscriptionAuthSmoke({
     if (initialized.body?.result?.serverInfo?.name !== 'bestcode-subscription-agent-gateway') throw new Error('Initialize server identity mismatch')
     checks.push('initialize')
 
-    const listed = await rpc(fetchImpl, endpoint, scopedToken, 2, 'tools/list', {})
-    const names = (listed.body?.result?.tools ?? []).map((tool) => tool.name).sort()
+    currentStage = 'tools_list_exact'
+    const listedTools = await rpc(fetchImpl, endpoint, scopedToken, 2, 'tools/list', {})
+    const names = (listedTools.body?.result?.tools ?? []).map((tool) => tool.name).sort()
     if (JSON.stringify(names) !== JSON.stringify([...REQUIRED_TOOLS].sort())) throw new Error('Read-only tool set mismatch')
-    for (const tool of listed.body?.result?.tools ?? []) {
+    for (const tool of listedTools.body?.result?.tools ?? []) {
       if (tool?.annotations?.readOnlyHint !== true || tool?._meta?.['bestcode/safetyClass'] !== 'read-only') {
         throw new Error(`Tool ${tool?.name ?? 'unknown'} is not annotated read-only`)
       }
     }
     checks.push('tools_list_exact')
 
+    currentStage = 'project_get'
     const project = await rpc(fetchImpl, endpoint, scopedToken, 3, 'tools/call', {
       name: 'project_get', arguments: { project_id: projectId },
     })
@@ -153,6 +250,7 @@ export async function runScopedSubscriptionAuthSmoke({
     checks.push('authoritative_connector_audit')
 
     if (includeOpenAiReads) {
+      currentStage = 'brain_export_summary'
       const summary = await rpc(fetchImpl, endpoint, scopedToken, 4, 'tools/call', {
         name: 'brain_export_summary', arguments: { project_id: projectId },
       })
@@ -162,12 +260,14 @@ export async function runScopedSubscriptionAuthSmoke({
       if (!missionId) throw new Error('No current Mission is available for mission_context_get smoke')
       checks.push('brain_export_summary')
 
+      currentStage = 'mission_context_get'
       const mission = await rpc(fetchImpl, endpoint, scopedToken, 5, 'tools/call', {
         name: 'mission_context_get', arguments: { project_id: projectId, mission_id: missionId },
       })
       successfulEnvelope(mission, 'mission_context_get')
       checks.push('mission_context_get')
 
+      currentStage = 'repository_status'
       const repository = await rpc(fetchImpl, endpoint, scopedToken, 6, 'tools/call', {
         name: 'repository_status', arguments: { project_id: projectId, limit: 10 },
       })
@@ -175,6 +275,7 @@ export async function runScopedSubscriptionAuthSmoke({
       checks.push('repository_status')
     }
 
+    currentStage = 'owner_endpoint_denied'
     const ownerEndpoint = await requestJson(fetchImpl, credentialApi, {
       method: 'GET',
       headers: { Authorization: `Bearer ${scopedToken}` },
@@ -182,56 +283,86 @@ export async function runScopedSubscriptionAuthSmoke({
     assertNoScopedSecret(ownerEndpoint.raw)
     checks.push('owner_endpoint_denied')
 
+    currentStage = 'wrong_project_denied'
     const wrongProject = new URL(endpoint)
     wrongProject.searchParams.set('project_id', `${projectId}-wrong`)
     await rpc(fetchImpl, wrongProject, scopedToken, 7, 'initialize', {}, 401)
     checks.push('wrong_project_denied')
 
+    currentStage = 'full_endpoint_denied'
     const fullEndpoint = new URL('/mcp', base)
     fullEndpoint.searchParams.set('project_id', projectId)
     await rpc(fetchImpl, fullEndpoint, scopedToken, 8, 'initialize', {}, 401)
     checks.push('full_endpoint_denied')
 
+    currentStage = 'mutation_denied'
     const mutation = await rpc(fetchImpl, endpoint, scopedToken, 9, 'tools/call', {
       name: 'repository_create_branch', arguments: { project_id: projectId, name: 'agent/forbidden-smoke' },
     })
     if (mutation.body?.result?.structuredContent?.error?.code !== 'TOOL_DISABLED_FOR_PROFILE') throw new Error('Mutation did not fail closed')
     checks.push('mutation_denied')
+  } catch (error) {
+    failure = error
+    failedStage = currentStage
   } finally {
     if (credentialId) {
-      await requestJson(fetchImpl, new URL(`/api/subscription/credentials/${credentialId}/revoke`, base), {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${ownerToken}` },
-      }, 200)
-      checks.push('credential_revoked')
+      try {
+        await revokeCredential(fetchImpl, base, ownerToken, credentialId)
+        credentialRevoked = true
+        checks.push('credential_revoked')
+      } catch (error) {
+        failure = failure
+          ? new Error(`${text(failure instanceof Error ? failure.message : String(failure), 300)}; credential revoke failed: ${text(error instanceof Error ? error.message : String(error), 180)}`)
+          : error
+        failedStage = 'credential_revoke'
+      }
     }
   }
 
-  if (scopedToken) {
-    const endpoint = new URL('/mcp/subscription', base)
-    endpoint.searchParams.set('project_id', projectId)
-    await rpc(fetchImpl, endpoint, scopedToken, 10, 'initialize', {}, 401)
-    checks.push('revoked_denied')
+  if (scopedToken && credentialRevoked) {
+    try {
+      currentStage = 'revoked_denied'
+      await rpc(fetchImpl, endpoint, scopedToken, 10, 'initialize', {}, 401)
+      checks.push('revoked_denied')
+    } catch (error) {
+      if (!failure) {
+        failure = error
+        failedStage = currentStage
+      }
+    }
   }
 
-  const endpoint = new URL('/mcp/subscription', base)
-  endpoint.searchParams.set('project_id', projectId)
-  const evidence = sanitize({
-    schema_version: cleanSchemaVersion,
-    checked_at: checkedAt,
-    endpoint: endpoint.toString(),
-    project_id: projectId,
-    credential_id: credentialId,
-    agent_id: cleanAgentName,
+  if (failure) {
+    throw failureWithEvidence(failure, smokeEvidence({
+      schemaVersion: cleanSchemaVersion,
+      checkedAt,
+      endpoint,
+      projectId,
+      credentialId,
+      agentName: cleanAgentName,
+      provider: cleanProvider,
+      checks,
+      staleCredentialsRevoked,
+      status: 'failed',
+      failedStage,
+      error: failure,
+      credentialRevoked,
+    }))
+  }
+
+  return smokeEvidence({
+    schemaVersion: cleanSchemaVersion,
+    checkedAt,
+    endpoint,
+    projectId,
+    credentialId,
+    agentName: cleanAgentName,
     provider: cleanProvider,
     checks,
-    raw_credential_persisted: false,
-    raw_mcp_response_contains_credential: false,
-    production_mutation: 'credential-created-then-revoked-only',
+    staleCredentialsRevoked,
     status: 'passed',
+    credentialRevoked,
   })
-  assertNoScopedSecret(evidence)
-  return evidence
 }
 
 function args(argv) {
@@ -248,18 +379,33 @@ function args(argv) {
 async function main() {
   const options = args(process.argv.slice(2))
   const output = resolve(options.output ?? 'artifacts/scoped-subscription-auth-smoke.json')
-  const evidence = await runScopedSubscriptionAuthSmoke({
-    backendUrl: options['backend-url'] ?? process.env.BESTCODE_BACKEND_URL,
-    ownerToken: process.env.BESTCODE_AUTH_TOKEN ?? process.env.AUTH_TOKEN,
-    projectId: options['project-id'] ?? 'bestcode',
-    agentName: options['agent-name'] ?? 'github-actions-scoped-smoke',
-    provider: options.provider ?? 'provider-neutral',
-    includeOpenAiReads: options['openai-reads'] === 'true',
-    evidenceSchemaVersion: options['schema-version'] ?? 'bestcode-scoped-subscription-auth-smoke-v1',
-  })
-  await mkdir(dirname(output), { recursive: true })
-  await writeFile(output, `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 })
-  console.log(JSON.stringify({ status: evidence.status, checks: evidence.checks, output }))
+  try {
+    const evidence = await runScopedSubscriptionAuthSmoke({
+      backendUrl: options['backend-url'] ?? process.env.BESTCODE_BACKEND_URL,
+      ownerToken: process.env.BESTCODE_AUTH_TOKEN ?? process.env.AUTH_TOKEN,
+      projectId: options['project-id'] ?? 'bestcode',
+      agentName: options['agent-name'] ?? 'github-actions-scoped-smoke',
+      provider: options.provider ?? 'provider-neutral',
+      includeOpenAiReads: options['openai-reads'] === 'true',
+      evidenceSchemaVersion: options['schema-version'] ?? 'bestcode-scoped-subscription-auth-smoke-v1',
+    })
+    await mkdir(dirname(output), { recursive: true })
+    await writeFile(output, `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 })
+    console.log(JSON.stringify({ status: evidence.status, checks: evidence.checks, output }))
+  } catch (error) {
+    const evidence = error?.evidence ?? sanitize({
+      schema_version: options['schema-version'] ?? 'bestcode-scoped-subscription-auth-smoke-v1',
+      checked_at: new Date().toISOString(),
+      status: 'failed',
+      failed_stage: 'controller_setup',
+      error: { message: text(error instanceof Error ? error.message : String(error), 500) },
+    })
+    assertNoScopedSecret(evidence)
+    await mkdir(dirname(output), { recursive: true })
+    await writeFile(output, `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 })
+    console.error(JSON.stringify({ status: 'failed', failed_stage: evidence.failed_stage, error: evidence.error?.message, output }))
+    process.exitCode = 1
+  }
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
