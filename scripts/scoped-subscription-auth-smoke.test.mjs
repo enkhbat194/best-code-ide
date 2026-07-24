@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { REQUIRED_TOOLS, assertNoScopedSecret, runScopedSubscriptionAuthSmoke } from './scoped-subscription-auth-smoke.mjs'
+import { REQUIRED_TOOLS, assertNoScopedSecret, assertScopedCredentialLeakSurfaces, runScopedSubscriptionAuthSmoke } from './scoped-subscription-auth-smoke.mjs'
 
 function response(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
@@ -150,3 +150,19 @@ test('failure evidence names the stage, contains no scoped secret, and confirms 
 test('secret leak detector rejects raw scoped credentials', () => {
   assert.throws(() => assertNoScopedSecret(`bcsub_v1.11111111-1111-1111-1111-111111111111.${'y'.repeat(43)}`), /leaked/)
 })
+
+test('one-time credential creation response is excluded but durable surfaces are scanned separately', () => {
+  const secret = `bcsub_v1.11111111-1111-1111-1111-111111111111.${'z'.repeat(43)}`
+  assert.doesNotThrow(() => assertScopedCredentialLeakSurfaces({
+    creationResponse: { body: { secret } },
+    repository: 'clean', audit: { secret: '[REDACTED]' }, mcpResponses: [], logs: '', artifacts: [],
+  }))
+  for (const surface of ['repository', 'audit', 'mcpResponses', 'logs', 'artifacts']) {
+    assert.throws(() => assertScopedCredentialLeakSurfaces({
+      creationResponse: { body: { secret } },
+      repository: '', audit: '', mcpResponses: [], logs: '', artifacts: [],
+      [surface]: secret,
+    }), /leaked/)
+  }
+})
+
