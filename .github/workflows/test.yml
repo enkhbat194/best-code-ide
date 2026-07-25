@@ -31,6 +31,55 @@ jobs:
           scripts/chat11-bounded-write-production-smoke.test.mjs
           scripts/chat11-bounded-write-production-denials.test.mjs
 
+  chat11-pr-audit:
+    name: Chat 11 diff, secret, and dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Resolve exact PR range
+        shell: bash
+        run: |
+          git fetch --no-tags --prune origin main:refs/remotes/origin/main
+          echo "BASE_SHA=$(git merge-base HEAD refs/remotes/origin/main)" >> "$GITHUB_ENV"
+          echo "HEAD_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - name: Run diff check and added-line secret scan
+        run: >-
+          node scripts/chat11-pr-security-audit.mjs
+          --base "$BASE_SHA"
+          --head "$HEAD_SHA"
+          --output artifacts/chat11-pr-security-audit.json
+      - name: Produce backend and frontend dependency reports
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          npm --prefix backend ci
+          npm --prefix frontend ci
+          npm --prefix backend audit --json > artifacts/backend-audit-full.json || true
+          npm --prefix backend audit --omit=dev --json > artifacts/backend-audit-production.json || true
+          npm --prefix frontend audit --json > artifacts/frontend-audit-full.json || true
+          npm --prefix frontend audit --omit=dev --json > artifacts/frontend-audit-production.json || true
+          npm --prefix backend ls --all --json > artifacts/backend-dependency-tree.json || true
+          npm --prefix frontend ls --all --json > artifacts/frontend-dependency-tree.json || true
+          node scripts/summarize-npm-audit.mjs \
+            --input artifacts \
+            --output artifacts/dependency-audit-summary.json
+          sha256sum artifacts/*.json > artifacts/SHA256SUMS.txt
+      - name: Upload Chat 11 audit evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: chat11-pr-audit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 30
+
   backend-tests:
     name: Backend typecheck and unit tests
     runs-on: ubuntu-latest
