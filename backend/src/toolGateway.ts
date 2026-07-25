@@ -173,7 +173,7 @@ export function gatewayTool(profile: GatewayProfile, name: string): GatewayTool 
     ? subscriptionToolMap.get(name)
     : profile === 'subscription-write-bounded'
       ? boundedWriteToolMap.get(name)
-    : legacyToolMap.get(name)
+      : legacyToolMap.get(name)
   return tool ? withSafetyMetadata(tool) : undefined
 }
 
@@ -188,6 +188,7 @@ function safeHeaderValue(value: string | null, fallback: string, max = 160): str
 }
 
 function positiveInteger(value: string | null, fallback: number, min: number, max: number): number {
+  if (value === null || value.trim() === '') return fallback
   const parsed = Number(value)
   return Number.isInteger(parsed) ? Math.min(Math.max(parsed, min), max) : fallback
 }
@@ -400,7 +401,7 @@ export async function executeGatewayTool(
         ? 'Use tools/list. Subscription gateways expose read-only tools only.'
         : profile === 'subscription-write-bounded'
           ? 'Use tools/list. Bounded write credentials expose only task-scoped repository tools.'
-        : 'Use tools/list and call an advertised tool.',
+          : 'Use tools/list and call an advertised tool.',
       context,
       name,
       safetyClass,
@@ -454,7 +455,7 @@ export async function executeGatewayTool(
         ? executeSubscriptionTool(name, args, token, env, context.project_scope!)
         : profile === 'subscription-write-bounded' && subscriptionToolMap.has(name)
           ? executeSubscriptionTool(name, args, token, env, context.project_scope!)
-        : executeLegacyTool(name, args, token, env, context),
+          : executeLegacyTool(name, args, token, env, context),
       context.timeout_ms,
     )
     return addMetadata(result, context, name, safetyClass, Date.now() - startedAt)
