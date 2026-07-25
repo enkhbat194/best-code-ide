@@ -49,16 +49,22 @@ jobs:
           git fetch --no-tags --prune origin main:refs/remotes/origin/main
           echo "BASE_SHA=$(git merge-base HEAD refs/remotes/origin/main)" >> "$GITHUB_ENV"
           echo "HEAD_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
-      - name: Run diff check and added-line secret scan
-        run: >-
-          node scripts/chat11-pr-security-audit.mjs
-          --base "$BASE_SHA"
-          --head "$HEAD_SHA"
-          --output artifacts/chat11-pr-security-audit.json
-      - name: Produce backend and frontend dependency reports
+      - name: Capture diff check and added-line secret scan
         shell: bash
         run: |
           mkdir -p artifacts
+          set +e
+          node scripts/chat11-pr-security-audit.mjs \
+            --base "$BASE_SHA" \
+            --head "$HEAD_SHA" \
+            --output artifacts/chat11-pr-security-audit.json \
+            2>&1 | tee artifacts/chat11-pr-security-audit.log
+          status=${PIPESTATUS[0]}
+          set -e
+          echo "SECURITY_AUDIT_EXIT=$status" >> "$GITHUB_ENV"
+      - name: Produce backend and frontend dependency reports
+        shell: bash
+        run: |
           npm --prefix backend ci
           npm --prefix frontend ci
           npm --prefix backend audit --json > artifacts/backend-audit-full.json || true
@@ -79,6 +85,24 @@ jobs:
           path: artifacts/
           if-no-files-found: error
           retention-days: 30
+      - name: Enforce Chat 11 audit result
+        if: always()
+        shell: bash
+        run: |
+          for file in \
+            artifacts/chat11-pr-security-audit.json \
+            artifacts/dependency-audit-summary.json \
+            artifacts/SHA256SUMS.txt; do
+            if [[ ! -f "$file" ]]; then
+              echo "::error::Required audit evidence is missing: $file"
+              exit 1
+            fi
+          done
+          if [[ "${SECURITY_AUDIT_EXIT:-1}" != "0" ]]; then
+            cat artifacts/chat11-pr-security-audit.log
+            echo "::error::Chat 11 diff/secret audit failed."
+            exit 1
+          fi
 
   backend-tests:
     name: Backend typecheck and unit tests
