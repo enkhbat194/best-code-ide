@@ -7,6 +7,15 @@ import {
   type SubscriptionCredentialRecord,
   type SubscriptionCredentialStatus,
 } from './subscriptionCredentialTypes'
+import {
+  BOUNDED_WRITE_CREDENTIAL_SCHEMA_VERSION,
+  BOUNDED_WRITE_CREDENTIAL_VERSION,
+  BOUNDED_WRITE_PROFILE,
+  boundedWriteCredentialStatus,
+  boundedWriteScopePayload,
+  publicBoundedWriteCredential,
+  type BoundedWriteCredentialRecord,
+} from './boundedWriteCredentialTypes'
 
 export interface SecurityAuditEvent {
   audit_id: string
@@ -20,6 +29,7 @@ export interface SecurityAuditEvent {
 }
 
 const CREDENTIAL_PREFIX = 'subscription-credential:'
+const BOUNDED_WRITE_CREDENTIAL_PREFIX = 'bounded-write-credential:'
 const DUMMY_SECRET_HASH = '0'.repeat(64)
 
 function json(body: unknown, status = 200): Response {
@@ -35,6 +45,14 @@ function eventKey(event: SecurityAuditEvent): string {
 
 function credentialKey(credentialId: string): string {
   return `${CREDENTIAL_PREFIX}${credentialId}`
+}
+
+function boundedWriteCredentialKey(credentialId: string): string {
+  return `${BOUNDED_WRITE_CREDENTIAL_PREFIX}${credentialId}`
+}
+
+function boundedWriteIdempotencyKey(credentialId: string, namespace: string, key: string): string {
+  return `bounded-write-idempotency:${credentialId}:${namespace}:${key}`
 }
 
 function cleanString(value: unknown, max: number): string | undefined {
@@ -144,6 +162,59 @@ function normalizeCredentialRecord(value: unknown): SubscriptionCredentialRecord
   }
 }
 
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
+  return [...new Uint8Array(digest)].map((item) => item.toString(16).padStart(2, '0')).join('')
+}
+
+function normalizeBoundedWriteCredentialRecord(value: unknown): BoundedWriteCredentialRecord | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const input = value as Record<string, any>
+  const stringFields = [
+    'credential_id', 'project_id', 'mission_id', 'execution_plan_id', 'task_id', 'attempt_id',
+    'lease_id', 'agent_id', 'provider', 'branch', 'base_sha', 'idempotency_namespace',
+    'approval_record_id', 'scope_hash', 'secret_hash',
+  ] as const
+  if (stringFields.some((field) => !cleanString(input[field], field === 'branch' ? 160 : 200))) return null
+  if (
+    input.schema_version !== BOUNDED_WRITE_CREDENTIAL_SCHEMA_VERSION ||
+    input.credential_version !== BOUNDED_WRITE_CREDENTIAL_VERSION ||
+    input.profile !== BOUNDED_WRITE_PROFILE ||
+    input.safety_class !== 'repository-bounded-write' ||
+    !/^[a-f0-9-]{36}$/i.test(input.credential_id) ||
+    !/^[a-f0-9]{40,64}$/i.test(input.base_sha) ||
+    !/^[a-f0-9]{64}$/i.test(input.scope_hash) ||
+    !/^[a-f0-9]{64}$/i.test(input.secret_hash) ||
+    !Number.isSafeInteger(input.fencing_token) || input.fencing_token < 1
+  ) return null
+  const issuedAt = cleanDate(input.issued_at)
+  const expiresAt = cleanDate(input.expires_at)
+  const revokedAt = input.revoked_at === undefined ? undefined : cleanDate(input.revoked_at)
+  const allowedTools = cleanStringList(input.allowed_tools, 100, 200)
+  const allowedPaths = cleanStringList(input.allowed_paths, 100, 300)
+  const deniedPaths = cleanStringList(input.denied_paths, 100, 300)
+  const limitKeys = ['max_operations', 'max_changed_files', 'max_total_changed_bytes', 'max_commits', 'max_pushes', 'max_pull_requests']
+  const usageKeys = ['operations', 'changed_files', 'total_changed_bytes', 'commits', 'pushes', 'pull_requests']
+  if (
+    !issuedAt || !expiresAt || Date.parse(expiresAt) <= Date.parse(issuedAt) ||
+    (input.revoked_at !== undefined && !revokedAt) ||
+    !allowedTools?.length || !allowedPaths?.length || !deniedPaths?.length ||
+    !input.limits || limitKeys.some((key) => !Number.isSafeInteger(input.limits[key]) || input.limits[key] < 1) ||
+    !input.usage || usageKeys.some((key) => !Number.isSafeInteger(input.usage[key]) || input.usage[key] < 0)
+  ) return null
+  return {
+    ...input,
+    issued_at: issuedAt,
+    expires_at: expiresAt,
+    ...(revokedAt ? { revoked_at: revokedAt } : {}),
+    allowed_tools: allowedTools,
+    allowed_paths: allowedPaths,
+    denied_paths: deniedPaths,
+    scope_hash: input.scope_hash.toLowerCase(),
+    secret_hash: input.secret_hash.toLowerCase(),
+  } as BoundedWriteCredentialRecord
+}
+
 export function normalizeSecurityAuditEvent(value: unknown): SecurityAuditEvent | null {
   if (!value || typeof value !== 'object') return null
   const input = value as Record<string, unknown>
@@ -174,6 +245,37 @@ export function normalizeSecurityAuditEvent(value: unknown): SecurityAuditEvent 
 
 export class SecurityAuditStore {
   constructor(private readonly state: DurableObjectState) {}
+
+  private async recordBoundedWriteAudit(
+    event: string,
+    record: BoundedWriteCredentialRecord | undefined,
+    occurredAt: string,
+    details: Record<string, unknown> = {},
+  ): Promise<void> {
+    const audit: SecurityAuditEvent = {
+      audit_id: crypto.randomUUID(),
+      event,
+      occurred_at: occurredAt,
+      identity: 'unknown',
+      details: {
+        ...(record ? {
+          credential_id: record.credential_id,
+          project_id: record.project_id,
+          mission_id: record.mission_id,
+          task_id: record.task_id,
+          attempt_id: record.attempt_id,
+          lease_id: record.lease_id,
+          fencing_token: record.fencing_token,
+          agent_id: record.agent_id,
+          provider: record.provider,
+          branch: record.branch,
+          scope_hash: record.scope_hash,
+        } : {}),
+        ...details,
+      },
+    }
+    await this.state.storage.put(eventKey(audit), audit)
+  }
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url)
@@ -212,6 +314,151 @@ export class SecurityAuditStore {
       if (await this.state.storage.get(key)) return json({ error: 'Credential already exists' }, 409)
       await this.state.storage.put(key, record)
       return json({ credential: publicCredential(record, record.issued_at) }, 201)
+    }
+
+    if (request.method === 'POST' && url.pathname === '/bounded-write-credentials') {
+      const record = normalizeBoundedWriteCredentialRecord(await request.json().catch(() => null))
+      if (!record) return json({ error: 'Invalid bounded write credential record' }, 400)
+      if (Date.parse(record.expires_at) - Date.parse(record.issued_at) > 7_200_000) {
+        return json({ error: 'Bounded write credential TTL exceeds maximum' }, 400)
+      }
+      const key = boundedWriteCredentialKey(record.credential_id)
+      if (await this.state.storage.get(key)) return json({ error: 'Credential already exists' }, 409)
+      await this.state.storage.put(key, record)
+      return json({ credential: publicBoundedWriteCredential(record, record.issued_at) }, 201)
+    }
+
+    if (request.method === 'GET' && url.pathname === '/bounded-write-credentials') {
+      const projectId = cleanString(url.searchParams.get('project_id'), 64)
+      const missionId = cleanString(url.searchParams.get('mission_id'), 64)
+      const taskId = cleanString(url.searchParams.get('task_id'), 64)
+      const values = await this.state.storage.list<BoundedWriteCredentialRecord>({ prefix: BOUNDED_WRITE_CREDENTIAL_PREFIX })
+      const items = [...values.values()]
+        .filter((item) =>
+          (!projectId || item.project_id === projectId) &&
+          (!missionId || item.mission_id === missionId) &&
+          (!taskId || item.task_id === taskId))
+        .sort((left, right) => Date.parse(right.issued_at) - Date.parse(left.issued_at))
+        .map((item) => publicBoundedWriteCredential(item))
+      return json({ items, count: items.length })
+    }
+
+    if (request.method === 'POST' && url.pathname === '/bounded-write-credentials/authenticate') {
+      const input = await request.json().catch(() => null) as Record<string, unknown> | null
+      const credentialId = cleanString(input?.credential_id, 64) ?? ''
+      const presentedHash = cleanString(input?.presented_hash, 64) ?? DUMMY_SECRET_HASH
+      const endpoint = cleanString(input?.endpoint, 200) ?? ''
+      const projectId = cleanString(input?.project_id, 64) ?? ''
+      const now = safeNow(input?.now)
+      const record = credentialId
+        ? await this.state.storage.get<BoundedWriteCredentialRecord>(boundedWriteCredentialKey(credentialId))
+        : undefined
+      const scopeHash = record
+        ? await sha256Hex(JSON.stringify(boundedWriteScopePayload(record)))
+        : DUMMY_SECRET_HASH
+      const status = record ? boundedWriteCredentialStatus(record, now) : undefined
+      const valid = Boolean(
+        record &&
+        constantTimeHexEqual(record.secret_hash, presentedHash) &&
+        constantTimeHexEqual(record.scope_hash, scopeHash) &&
+        status === 'active' &&
+        endpoint === '/mcp/subscription' &&
+        projectId === record.project_id &&
+        record.profile === BOUNDED_WRITE_PROFILE,
+      )
+      if (!valid || !record) {
+        await this.recordBoundedWriteAudit(
+          status === 'expired' ? 'bounded_write_credential_expired' : 'bounded_write_credential_denied',
+          record,
+          now,
+          {
+            denial_code: 'INVALID_BOUNDED_WRITE_CREDENTIAL',
+            endpoint,
+            requested_project_id: projectId,
+            credential_status: status ?? 'not_found',
+          },
+        )
+        return json({ ok: false, code: 'INVALID_BOUNDED_WRITE_CREDENTIAL' }, 401)
+      }
+      const { secret_hash: _secretHash, issued_at: _issuedAt, revoked_at: _revokedAt, ...principal } = record
+      return json({ ok: true, principal })
+    }
+
+    const boundedWriteMatch = url.pathname.match(/^\/bounded-write-credentials\/([a-f0-9-]{36})(?:\/(revoke|authorize-operation))?$/i)
+    if (boundedWriteMatch) {
+      const key = boundedWriteCredentialKey(boundedWriteMatch[1])
+      const record = await this.state.storage.get<BoundedWriteCredentialRecord>(key)
+      if (!record) return json({ error: 'Credential not found' }, 404)
+      if (request.method === 'GET' && !boundedWriteMatch[2]) {
+        return json({ credential: publicBoundedWriteCredential(record) })
+      }
+      if (request.method === 'POST' && boundedWriteMatch[2] === 'revoke') {
+        const revokedAt = record.revoked_at ?? new Date().toISOString()
+        const updated = { ...record, revoked_at: revokedAt }
+        await this.state.storage.put(key, updated)
+        await this.recordBoundedWriteAudit('bounded_write_credential_revoked', updated, revokedAt)
+        return json({ credential: publicBoundedWriteCredential(updated, revokedAt) })
+      }
+      if (request.method === 'POST' && boundedWriteMatch[2] === 'authorize-operation') {
+        const input = await request.json().catch(() => null) as Record<string, unknown> | null
+        const now = safeNow(input?.now)
+        const tool = cleanString(input?.tool, 200) ?? ''
+        const deny = async (code: string, status = 403, details: Record<string, unknown> = {}) => {
+          await this.recordBoundedWriteAudit('bounded_write_operation_denied', record, now, {
+            tool,
+            denial_code: code,
+            ...details,
+          })
+          return json({ code, ...details }, status)
+        }
+        if (boundedWriteCredentialStatus(record, now) !== 'active') return deny('CREDENTIAL_INACTIVE')
+        const scopeHash = cleanString(input?.scope_hash, 64) ?? ''
+        if (!constantTimeHexEqual(record.scope_hash, scopeHash)) return deny('SCOPE_HASH_MISMATCH')
+        if (!record.allowed_tools.includes(tool)) return deny('TOOL_SCOPE_DENIED')
+        const idempotencyKey = cleanString(input?.idempotency_key, 128) ?? ''
+        if (!idempotencyKey) return deny('IDEMPOTENCY_KEY_REQUIRED', 400)
+        const replayKey = boundedWriteIdempotencyKey(record.credential_id, record.idempotency_namespace, idempotencyKey)
+        const replay = await this.state.storage.get<{ tool: string; usage: BoundedWriteCredentialRecord['usage'] }>(replayKey)
+        if (replay) {
+          if (replay.tool !== tool) return deny('IDEMPOTENCY_KEY_CONFLICT', 409)
+          await this.recordBoundedWriteAudit('bounded_write_operation_replayed', record, now, { tool })
+          return json({ ok: true, replayed: true, usage: replay.usage })
+        }
+        const integer = (key: string) => {
+          const value = Number(input?.[key] ?? 0)
+          return Number.isSafeInteger(value) && value >= 0 ? value : -1
+        }
+        const delta = {
+          operations: 1,
+          changed_files: integer('changed_files'),
+          total_changed_bytes: integer('changed_bytes'),
+          commits: integer('commits'),
+          pushes: integer('pushes'),
+          pull_requests: integer('pull_requests'),
+        }
+        if (Object.values(delta).some((value) => value < 0)) return deny('INVALID_OPERATION_DELTA', 400)
+        const nextUsage = {
+          operations: record.usage.operations + delta.operations,
+          changed_files: record.usage.changed_files + delta.changed_files,
+          total_changed_bytes: record.usage.total_changed_bytes + delta.total_changed_bytes,
+          commits: record.usage.commits + delta.commits,
+          pushes: record.usage.pushes + delta.pushes,
+          pull_requests: record.usage.pull_requests + delta.pull_requests,
+        }
+        const exceeded =
+          nextUsage.operations > record.limits.max_operations ||
+          nextUsage.changed_files > record.limits.max_changed_files ||
+          nextUsage.total_changed_bytes > record.limits.max_total_changed_bytes ||
+          nextUsage.commits > record.limits.max_commits ||
+          nextUsage.pushes > record.limits.max_pushes ||
+          nextUsage.pull_requests > record.limits.max_pull_requests
+        if (exceeded) return deny('OPERATION_LIMIT_EXCEEDED', 403, { usage: record.usage, limits: record.limits })
+        const updated = { ...record, usage: nextUsage }
+        await this.state.storage.put(key, updated)
+        await this.state.storage.put(replayKey, { tool, usage: nextUsage })
+        await this.recordBoundedWriteAudit('bounded_write_operation_authorized', updated, now, { tool, usage: nextUsage })
+        return json({ ok: true, replayed: false, usage: nextUsage })
+      }
     }
 
     if (request.method === 'GET' && url.pathname === '/subscription-credentials') {

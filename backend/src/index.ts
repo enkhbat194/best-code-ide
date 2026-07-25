@@ -12,6 +12,7 @@ import { handleMcp } from './mcp'
 import { handleMissionApi } from './missionApi'
 import { handleMissionExecutionApi } from './missionExecutionApi'
 import { openapiSpec } from './openapi'
+import { boundedWriteOpenapiSpec } from './boundedWriteOpenapi'
 import { handleRelease, healthPayload } from './release'
 import { handleRest } from './rest'
 import {
@@ -34,6 +35,7 @@ import {
 } from './security'
 import { handleSecurityAudit, persistSecurityAudit } from './securityAudit'
 import { handleSubscriptionCredentialApi } from './subscriptionCredentialApi'
+import { handleBoundedWriteCredentialApi } from './boundedWriteCredentialApi'
 import type { RequestPrincipal } from './subscriptionCredentialTypes'
 import { handleTasks } from './tasks'
 import { handleWorkspaceExport } from './workspace'
@@ -99,6 +101,9 @@ export default {
     }
 
     if (url.pathname === '/openapi.json' && req.method === 'GET') return jsonResponse(openapiSpec(url.origin))
+    if (url.pathname === '/openapi-bounded-write.json' && req.method === 'GET') {
+      return jsonResponse(boundedWriteOpenapiSpec(url.origin))
+    }
 
     const authentication = await authenticateRequest(req, env)
     const principal = authentication.principal
@@ -111,7 +116,7 @@ export default {
     const identity = rateLimitIdentity(principal)
     const rateLimit = principal?.kind === 'owner'
       ? rateProfile.owner
-      : principal?.kind === 'subscription'
+      : principal
         ? rateProfile.fallback
         : rateProfile.unauthorized
     const rateResponse = enforceRateLimit(`${identity}:${clientRateKey(req)}`, rateLimit, rateProfile.windowMs)
@@ -121,7 +126,7 @@ export default {
         method: req.method,
         identity: principal?.kind === 'owner' ? 'owner' : principal ? 'unknown' : 'unauthorized',
         auth_type: principal?.kind ?? authentication.attempted_kind,
-        credential_id: principal?.kind === 'subscription' ? principal.credential_id : undefined,
+        credential_id: principal && principal.kind !== 'owner' ? principal.credential_id : undefined,
         client: clientRateKey(req),
       })
       return rateResponse
@@ -161,6 +166,9 @@ export default {
 
     const credentialResponse = await handleSubscriptionCredentialApi(req, env, url, principal)
     if (credentialResponse) return credentialResponse
+
+    const boundedWriteCredentialResponse = await handleBoundedWriteCredentialApi(req, env, url, principal)
+    if (boundedWriteCredentialResponse) return boundedWriteCredentialResponse
 
     const securityAuditResponse = await handleSecurityAudit(req, env, url)
     if (securityAuditResponse) return securityAuditResponse

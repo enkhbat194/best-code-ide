@@ -20,7 +20,104 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: node --test scripts/cloudflare-release-integrity.test.mjs scripts/cloudflare-release-integrity-retry.test.mjs scripts/cloudflare-production-build-controller.test.mjs scripts/r2-production-smoke.test.mjs scripts/mcp-production-smoke.test.mjs scripts/scoped-subscription-auth-smoke.test.mjs
+      - run: >-
+          node --test
+          scripts/cloudflare-release-integrity.test.mjs
+          scripts/cloudflare-release-integrity-retry.test.mjs
+          scripts/cloudflare-production-build-controller.test.mjs
+          scripts/r2-production-smoke.test.mjs
+          scripts/mcp-production-smoke.test.mjs
+          scripts/scoped-subscription-auth-smoke.test.mjs
+          scripts/chat11-bounded-write-production-smoke.test.mjs
+          scripts/chat11-bounded-write-production-denials.test.mjs
+
+  chat11-pr-audit:
+    name: Chat 11 diff, secret, and dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Resolve exact PR range
+        shell: bash
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git fetch --no-tags --prune origin main:refs/remotes/origin/main
+          base_sha="$PR_BASE_SHA"
+          head_sha="$PR_HEAD_SHA"
+          if [[ -z "$base_sha" ]]; then
+            base_sha="$(git merge-base HEAD refs/remotes/origin/main)"
+          fi
+          if [[ -z "$head_sha" ]]; then
+            head_sha="$(git rev-parse HEAD)"
+          fi
+          if [[ ! "$base_sha" =~ ^[a-f0-9]{40}$ || ! "$head_sha" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "::error::Unable to resolve exact Chat 11 audit SHAs."
+            exit 1
+          fi
+          echo "BASE_SHA=$base_sha" >> "$GITHUB_ENV"
+          echo "HEAD_SHA=$head_sha" >> "$GITHUB_ENV"
+      - name: Capture diff check and added-line secret scan
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          set +e
+          node scripts/chat11-pr-security-audit.mjs \
+            --base "$BASE_SHA" \
+            --head "$HEAD_SHA" \
+            --output artifacts/chat11-pr-security-audit.json \
+            2>&1 | tee artifacts/chat11-pr-security-audit.log
+          status=${PIPESTATUS[0]}
+          set -e
+          echo "SECURITY_AUDIT_EXIT=$status" >> "$GITHUB_ENV"
+      - name: Produce backend and frontend dependency reports
+        shell: bash
+        run: |
+          npm --prefix backend ci
+          npm --prefix frontend ci
+          npm --prefix backend audit --json > artifacts/backend-audit-full.json || true
+          npm --prefix backend audit --omit=dev --json > artifacts/backend-audit-production.json || true
+          npm --prefix frontend audit --json > artifacts/frontend-audit-full.json || true
+          npm --prefix frontend audit --omit=dev --json > artifacts/frontend-audit-production.json || true
+          npm --prefix backend ls --all --json > artifacts/backend-dependency-tree.json || true
+          npm --prefix frontend ls --all --json > artifacts/frontend-dependency-tree.json || true
+          node scripts/summarize-npm-audit.mjs \
+            --input artifacts \
+            --output artifacts/dependency-audit-summary.json
+          sha256sum artifacts/*.json > artifacts/SHA256SUMS.txt
+      - name: Upload Chat 11 audit evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: chat11-pr-audit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Enforce Chat 11 audit result
+        if: always()
+        shell: bash
+        run: |
+          for file in \
+            artifacts/chat11-pr-security-audit.json \
+            artifacts/dependency-audit-summary.json \
+            artifacts/SHA256SUMS.txt; do
+            if [[ ! -f "$file" ]]; then
+              echo "::error::Required audit evidence is missing: $file"
+              exit 1
+            fi
+          done
+          if [[ "${SECURITY_AUDIT_EXIT:-1}" != "0" ]]; then
+            cat artifacts/chat11-pr-security-audit.log
+            echo "::error::Chat 11 diff/secret audit failed."
+            exit 1
+          fi
 
   backend-tests:
     name: Backend typecheck and unit tests

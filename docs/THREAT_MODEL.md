@@ -39,6 +39,24 @@ GitHub | AI providers | Search | Browser | Runner | Storage
 Web pages | repositories | logs | uploads | generated code
 ```
 
+## Chat 11 bounded-write credential addendum
+
+The `subscription-write-bounded-v1` profile introduces repository mutation authority, so possession of its raw bearer is treated as a P0 capability.
+
+New fail-closed controls:
+
+- a maximum two-hour lifetime, with a 30-minute default;
+- one-time raw-secret display and hash-only storage;
+- authoritative project/Mission/plan/task/attempt/lease/fencing/agent/provider binding;
+- exact branch and base-SHA binding;
+- allowed-tool and path allowlists plus protected-path deny rules;
+- file, byte, operation, commit, push, and draft-PR limits;
+- deterministic scope hash and idempotency namespace;
+- immediate owner revoke and lease-expiry denial;
+- no merge, deploy, rollback, credential administration, approval, secret, or arbitrary-shell tool.
+
+Threats explicitly covered include stolen credential replay, provider or agent spoofing, cross-project and cross-Mission reuse, stale lease or fencing-token reuse, stale-source overwrite, branch switching, path traversal and protected-path mutation, partial continuation after a limit, and secret disclosure through storage or status responses.
+
 Trust boundary бүрт identity, capability, validation, audit, timeout, data classification байна. “AI ойлгоно” бол security control биш.
 
 ## 4. Actor

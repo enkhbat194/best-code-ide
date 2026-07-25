@@ -180,6 +180,65 @@ test('new operations cannot be injected in an already-approved state', async () 
   assert.equal(response.status, 409)
 })
 
+test('one pending same-file operation can be patched before owner approval and keeps one final diff', async (t) => {
+  const { store } = harness()
+  const env = envFor(store)
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init)
+    const url = new URL(request.url)
+    if (request.method === 'GET' && url.pathname.endsWith('/branches/agent/chat11-amend')) {
+      return new Response(JSON.stringify({
+        name: 'agent/chat11-amend',
+        protected: false,
+        commit: { sha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' },
+      }), { headers: { 'Content-Type': 'application/json' } })
+    }
+    if (request.method === 'GET' && url.pathname.endsWith('/contents/docs/smoke/amend.md')) {
+      return new Response(null, { status: 404 })
+    }
+    throw new Error(`Unexpected GitHub request: ${request.method} ${request.url}`)
+  }
+  t.after(() => { globalThis.fetch = originalFetch })
+
+  const staged = await executeSafeWriteMcpTool('repository_write_file', {
+    project_id: 'bestcode',
+    branch: 'agent/chat11-amend',
+    path: 'docs/smoke/amend.md',
+    content: 'first line\n',
+    expected_branch_head_sha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    expected_old_hash: 'absent',
+  }, 'test-github-token', env)
+  assert.equal(staged.structuredContent.status, 'pending_approval')
+
+  const amended = await executeSafeWriteMcpTool('repository_apply_patch', {
+    project_id: 'bestcode',
+    branch: 'agent/chat11-amend',
+    path: 'docs/smoke/amend.md',
+    operation_id: staged.structuredContent.operation_id,
+    patch: [
+      '--- a/docs/smoke/amend.md',
+      '+++ b/docs/smoke/amend.md',
+      '@@ -1,1 +1,2 @@',
+      ' first line',
+      '+second line',
+      '',
+    ].join('\n'),
+    expected_branch_head_sha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    expected_old_hash: 'absent',
+  }, 'test-github-token', env)
+  assert.equal(amended.structuredContent.operation_id, staged.structuredContent.operation_id)
+  assert.equal(amended.structuredContent.result.amended, true)
+
+  const stored = await (await store.fetch(
+    new Request(`https://approval-store/operations/${staged.structuredContent.operation_id}`),
+  )).json()
+  assert.equal(stored.changes.length, 1)
+  assert.equal(stored.changes[0].proposed_content, 'first line\nsecond line\n')
+  assert.match(stored.changes[0].proposed_sha256, /^[a-f0-9]{64}$/)
+  assert.match(stored.changes[0].diff, /second line/)
+})
+
 test('changed file-delivery context is invalidated before a commit object is created', async (t) => {
   const { store } = harness()
   const env = envFor(store)
@@ -228,6 +287,7 @@ test('changed file-delivery context is invalidated before a commit object is cre
     env,
   )
   assert.equal(staged.structuredContent.status, 'pending_approval')
+  assert.match(staged.structuredContent.result.changes[0].proposed_sha256, /^[a-f0-9]{64}$/)
   const operationId = staged.structuredContent.operation_id
   assert.equal((await decide(store, operationId, 'approved', crypto.randomUUID())).status, 200)
 

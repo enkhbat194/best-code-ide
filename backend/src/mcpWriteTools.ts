@@ -1,8 +1,9 @@
 import * as gh from './github'
-import { createApproval, getApproval, listApprovals, markCompleted, markSuperseded } from './approvalClient'
+import { amendApproval, createApproval, getApproval, listApprovals, markCompleted, markSuperseded } from './approvalClient'
 import type { ApprovalOperation, RiskLevel, StagedChange } from './approvalStore'
 import { createUnifiedDiff, applyUnifiedPatch } from './patch'
 import { getProject, type ProjectConfig } from './projects'
+import { sha256Hex } from './subscriptionCredentials'
 import type { Env } from './types'
 
 const MAX_FILE_CHARS = 500_000
@@ -73,6 +74,8 @@ export const safeWriteMcpTools = [
         branch: { type: 'string' },
         path: { type: 'string' },
         content: { type: 'string', maxLength: MAX_FILE_CHARS },
+        expected_branch_head_sha: { type: 'string', pattern: '^[a-fA-F0-9]{40,64}$', description: 'Required by bounded-write credentials.' },
+        expected_old_hash: { type: 'string', pattern: '^(?:absent|[a-fA-F0-9]{40,64})$', description: 'Required by bounded-write credentials.' },
         title: { type: 'string' },
         summary: { type: 'string' },
       },
@@ -92,6 +95,9 @@ export const safeWriteMcpTools = [
         branch: { type: 'string' },
         path: { type: 'string' },
         patch: { type: 'string', maxLength: 250000 },
+        operation_id: { type: 'string', description: 'Optional pending same-file operation to amend before owner approval.' },
+        expected_branch_head_sha: { type: 'string', pattern: '^[a-fA-F0-9]{40,64}$', description: 'Required by bounded-write credentials.' },
+        expected_old_hash: { type: 'string', pattern: '^(?:absent|[a-fA-F0-9]{40,64})$', description: 'Required by bounded-write credentials.' },
         title: { type: 'string' },
         summary: { type: 'string' },
       },
@@ -229,8 +235,11 @@ function validateWorkingBranch(branch: string): void {
 function normalizePath(value: string): string {
   const path = value.trim().replace(/^\/+/, '')
   if (!path || path.length > 240) throw new Error('INVALID_PATH: path is required and must be at most 240 characters')
-  if (path.split('/').some((part) => part === '..' || part === '.')) throw new Error('INVALID_PATH: relative path segments are not allowed')
-  if (path.startsWith('.git/')) throw new Error('INVALID_PATH: .git paths are not accessible')
+  if (/[\u0000-\u001f\u007f\\]/.test(path)) throw new Error('INVALID_PATH: control characters and backslashes are not allowed')
+  if (/%[a-f0-9]{2}/i.test(path)) throw new Error('INVALID_PATH: encoded path sequences are not allowed')
+  if (path.normalize('NFKC') !== path) throw new Error('INVALID_PATH: non-canonical path characters are not allowed')
+  if (path.split('/').some((part) => !part || part === '..' || part === '.')) throw new Error('INVALID_PATH: relative or empty path segments are not allowed')
+  if (path.toLowerCase() === '.git' || path.toLowerCase().startsWith('.git/')) throw new Error('INVALID_PATH: .git paths are not accessible')
   return path
 }
 
@@ -438,7 +447,12 @@ async function stageOperation(
       risk: operation.risk,
       risk_reasons: operation.risk_reasons,
       expires_at: operation.expires_at,
-      changes: operation.changes.map((item) => ({ action: item.action, path: item.path, base_sha: item.base_sha })),
+      changes: operation.changes.map((item) => ({
+        action: item.action,
+        path: item.path,
+        base_sha: item.base_sha,
+        proposed_sha256: item.proposed_sha256 ?? null,
+      })),
       diff: change.diff,
       next_action: 'The user must approve this operation in BestCode before any commit or push tool can deliver it.',
     },
@@ -467,6 +481,12 @@ export async function executeSafeWriteMcpTool(
       validateWorkingBranch(branchName)
       if (!branchName.startsWith('agent/')) throw new Error('INVALID_BRANCH: working branches must use the agent/<task> prefix')
       const from = typeof args.from_branch === 'string' && args.from_branch.trim() ? args.from_branch.trim() : project.defaultBranch
+      if (typeof args.expected_base_sha === 'string' && args.expected_base_sha.trim()) {
+        const source = await gh.getBranch(token, project.owner, project.repo, from)
+        if (!source || source.sha !== args.expected_base_sha.trim().toLowerCase()) {
+          throw new Error(`CONTEXT_CONFLICT: ${from} does not match expected base SHA`)
+        }
+      }
       const created = await gh.createBranch(token, project.owner, project.repo, branchName, from)
       return finish({
         ok: true,
@@ -549,6 +569,7 @@ export async function executeSafeWriteMcpTool(
             action: change.action,
             path: change.path,
             base_sha: change.base_sha,
+            proposed_sha256: change.proposed_sha256 ?? null,
             diff: change.diff,
           })),
         },
@@ -589,11 +610,26 @@ export async function executeSafeWriteMcpTool(
     branch = requireString(args, 'branch')
     validateWorkingBranch(branch)
     const path = normalizePath(requireString(args, 'path'))
+    if (typeof args.expected_base_sha === 'string' && args.expected_base_sha.trim()) {
+      const source = await gh.getBranch(token, project.owner, project.repo, project.defaultBranch)
+      if (!source || source.sha !== args.expected_base_sha.trim().toLowerCase()) {
+        throw new Error(`CONTEXT_CONFLICT: ${project.defaultBranch} does not match expected base SHA`)
+      }
+    }
+    if (typeof args.expected_branch_head_sha === 'string' && args.expected_branch_head_sha.trim()) {
+      const currentBranch = await gh.getBranch(token, project.owner, project.repo, branch)
+      if (!currentBranch || currentBranch.sha !== args.expected_branch_head_sha.trim().toLowerCase()) {
+        throw new Error(`CONTEXT_CONFLICT: ${branch} head does not match expected SHA`)
+      }
+    }
 
     if (name === 'repository_write_file') {
       const content = typeof args.content === 'string' ? args.content : ''
       if (content.length > MAX_FILE_CHARS) throw new Error(`content exceeds the ${MAX_FILE_CHARS} character limit`)
       const existing = await gh.getFile(token, project.owner, project.repo, path, branch)
+      if (typeof args.expected_old_hash === 'string' && args.expected_old_hash !== (existing?.sha ?? 'absent')) {
+        throw new Error(`BASE_CONFLICT: ${path} does not match expected old hash`)
+      }
       if (existing?.content === content) throw new Error('INVALID_ARGUMENT: proposed content is identical to the branch content')
       const action: StagedChange['action'] = existing ? 'update' : 'create'
       const diff = createUnifiedDiff(path, existing?.content ?? null, content)
@@ -603,6 +639,7 @@ export async function executeSafeWriteMcpTool(
         base_sha: existing?.sha ?? null,
         base_content: existing?.content ?? null,
         proposed_content: content,
+        proposed_sha256: await sha256Hex(content),
         diff,
       })
     }
@@ -610,6 +647,59 @@ export async function executeSafeWriteMcpTool(
     if (name === 'repository_apply_patch') {
       const patch = requireString(args, 'patch')
       const existing = await gh.getFile(token, project.owner, project.repo, path, branch)
+      if (typeof args.expected_old_hash === 'string' && args.expected_old_hash !== (existing?.sha ?? 'absent')) {
+        throw new Error(`BASE_CONFLICT: ${path} does not match expected old hash`)
+      }
+      const pendingOperationId = typeof args.operation_id === 'string' ? args.operation_id.trim() : ''
+      if (pendingOperationId) {
+        const operation = await getApproval(env, pendingOperationId)
+        assertOperationProject(operation, project.id)
+        if (operation.status !== 'pending_approval') {
+          throw new Error(`INVALID_OPERATION_STATE: operation cannot be amended from ${operation.status}`)
+        }
+        if (
+          operation.branch !== branch ||
+          operation.base_context_sha !== args.expected_branch_head_sha ||
+          operation.changes.length !== 1 ||
+          operation.changes[0].path !== path ||
+          operation.changes[0].action === 'delete' ||
+          operation.changes[0].proposed_content === null
+        ) {
+          throw new Error('OPERATION_SCOPE_MISMATCH: patch must amend the exact pending same-file operation')
+        }
+        const staged = operation.changes[0]
+        if (staged.proposed_content === null) throw new Error('OPERATION_SCOPE_MISMATCH: staged content is unavailable')
+        if (
+          (staged.action === 'create' && existing) ||
+          (staged.action === 'update' && (!existing || existing.sha !== staged.base_sha))
+        ) {
+          throw new Error(`BASE_CONFLICT: ${path} changed after the operation was staged`)
+        }
+        const applied = applyUnifiedPatch(staged.proposed_content, patch, path)
+        if (applied.content === staged.proposed_content) throw new Error('INVALID_ARGUMENT: patch produces no content change')
+        const proposedSha256 = await sha256Hex(applied.content)
+        const updated = await amendApproval(env, operation.operation_id, {
+          proposed_content: applied.content,
+          proposed_sha256: proposedSha256,
+          diff: createUnifiedDiff(path, staged.base_content, applied.content),
+        })
+        return finish({
+          ok: true,
+          operation_id: updated.operation_id,
+          status: updated.status,
+          project_id: project.id,
+          repository: repoFields(project),
+          branch,
+          approval_required: true,
+          result: {
+            amended: true,
+            path,
+            proposed_sha256: proposedSha256,
+            diff: updated.changes[0].diff,
+            next_action: 'The owner must approve the amended final diff before repository_commit.',
+          },
+        })
+      }
       if (!existing) throw new Error(`File not found: ${path}`)
       const applied = applyUnifiedPatch(existing.content, patch, path)
       if (applied.content === existing.content) throw new Error('INVALID_ARGUMENT: patch produces no content change')
@@ -620,6 +710,7 @@ export async function executeSafeWriteMcpTool(
         base_sha: existing.sha,
         base_content: existing.content,
         proposed_content: applied.content,
+        proposed_sha256: await sha256Hex(applied.content),
         diff,
       })
     }
@@ -634,6 +725,7 @@ export async function executeSafeWriteMcpTool(
         base_sha: existing.sha,
         base_content: existing.content,
         proposed_content: null,
+        proposed_sha256: null,
         diff,
       })
     }

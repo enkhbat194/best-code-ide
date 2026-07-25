@@ -3,7 +3,9 @@ import { createTask, getApproval, getTask, listTasks, markCommitPrepared, markPu
 import type { ApprovalOperation, TaskKind, TaskRecord } from './approvalStore'
 import * as agentGit from './agentGit'
 import { getBranchHead, prepareCommit, pushPreparedCommit } from './gitDelivery'
+import { scanBoundedWriteContent } from './boundedWriteSafety'
 import { getProject, type ProjectConfig } from './projects'
+import { sha256Hex } from './subscriptionCredentials'
 import { cancelWorkflowTask, dispatchWorkflow, readTaskLogs, refreshWorkflowTask } from './workflowRunner'
 import type { Env } from './types'
 
@@ -236,6 +238,12 @@ function assertProject(operation: ApprovalOperation, project: ProjectConfig): vo
   if (operation.project_id !== project.id) throw new Error('Operation not found for this project')
 }
 
+function assertExpectedBranch(operation: ApprovalOperation, expected: unknown): void {
+  if (typeof expected === 'string' && operation.branch !== expected) {
+    throw new Error('BRANCH_SCOPE_DENIED: operation is outside the credential-bound branch')
+  }
+}
+
 function assertWorkingBranch(branch: string): void {
   if (branch === 'main' || branch === 'master') throw new Error('PROTECTED_BRANCH: delivery to main/master is blocked')
 }
@@ -262,6 +270,18 @@ async function assertBaseShas(token: string, operation: ApprovalOperation): Prom
       throw new Error(`BASE_CONFLICT: ${change.path} no longer exists on ${operation.branch}`)
     } else if (current.sha !== change.base_sha) {
       throw new Error(`BASE_CONFLICT: ${change.path} changed from ${change.base_sha} to ${current.sha}`)
+    }
+  }
+}
+
+async function assertApprovedContentSafety(operation: ApprovalOperation): Promise<void> {
+  for (const change of operation.changes) {
+    if (change.proposed_content === null) continue
+    const scan = scanBoundedWriteContent('repository_write_file', { content: change.proposed_content })
+    if (!scan.safe) throw new Error(`CONTENT_SAFETY_CONFLICT: ${change.path} failed secret or dangerous-content scan`)
+    const hash = await sha256Hex(change.proposed_content)
+    if (change.proposed_sha256 && change.proposed_sha256 !== hash) {
+      throw new Error(`CONTENT_HASH_CONFLICT: ${change.path} proposed content hash changed after approval`)
     }
   }
 }
@@ -293,7 +313,7 @@ function taskResult(task: TaskRecord) {
 function classify(error: unknown) {
   const message = error instanceof Error ? error.message : String(error)
   if (/PROTECTED_BRANCH/.test(message)) return { code: 'PROTECTED_BRANCH', message, retryable: false, action_required: 'Use an agent/<task> working branch.' }
-  if (/BASE_CONFLICT|BRANCH_CONFLICT|CONTEXT_CONFLICT/.test(message)) return { code: 'CONFLICT', message, retryable: false, action_required: 'Read the latest branch files and create a new staged approval operation.' }
+  if (/BASE_CONFLICT|BRANCH_CONFLICT|CONTEXT_CONFLICT|CONTENT_(?:SAFETY|HASH)_CONFLICT/.test(message)) return { code: 'CONFLICT', message, retryable: false, action_required: 'Read the latest branch files and create a new safely scanned staged approval operation.' }
   if (/status approved|status commit_prepared|status pushed|must be approved|must be pushed/i.test(message)) {
     return { code: 'INVALID_OPERATION_STATE', message, retryable: false, action_required: 'Complete approval, commit, push, build, and test in the required order.' }
   }
@@ -330,6 +350,9 @@ async function startWorkflowTask(
     task_id: crypto.randomUUID(),
     kind,
     project_id: project.id,
+    ...(typeof operationId === 'string' && operationId.trim()
+      ? { operation_id: operationId.trim() }
+      : {}),
     repository: repo(project),
     branch,
     workflow,
@@ -381,13 +404,15 @@ export async function executeDeliveryMcpTool(
     if (name === 'repository_commit') {
       const operation = await getApproval(env, requireString(args, 'operation_id'))
       assertProject(operation, project)
+      assertExpectedBranch(operation, args.expected_branch)
       assertWorkingBranch(operation.branch)
       if (operation.status !== 'approved') throw new Error(`Operation must be approved; current status is ${operation.status}`)
       try {
         await assertBaseShas(token, operation)
+        await assertApprovedContentSafety(operation)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        if (/BASE_CONFLICT|CONTEXT_CONFLICT/.test(message)) {
+        if (/BASE_CONFLICT|CONTEXT_CONFLICT|CONTENT_(?:SAFETY|HASH)_CONFLICT/.test(message)) {
           await markSuperseded(env, operation.operation_id, message)
         }
         throw error
@@ -427,6 +452,7 @@ export async function executeDeliveryMcpTool(
     if (name === 'repository_push') {
       const operation = await getApproval(env, requireString(args, 'operation_id'))
       assertProject(operation, project)
+      assertExpectedBranch(operation, args.expected_branch)
       assertWorkingBranch(operation.branch)
       if (operation.status !== 'commit_prepared' || !operation.prepared_commit_sha || !operation.parent_sha) {
         throw new Error(`Operation must be in status commit_prepared; current status is ${operation.status}`)
@@ -459,6 +485,7 @@ export async function executeDeliveryMcpTool(
     if (name === 'repository_create_pull_request') {
       const operation = await getApproval(env, requireString(args, 'operation_id'))
       assertProject(operation, project)
+      assertExpectedBranch(operation, args.expected_branch)
       if (operation.status !== 'pushed') throw new Error(`Operation must be pushed; current status is ${operation.status}`)
       await assertSuccessfulTasks(env, project, operation)
       const base = typeof args.base === 'string' && args.base.trim() ? args.base.trim() : project.defaultBranch
