@@ -34,4 +34,3 @@ The stored profile is authoritative. A request parameter cannot turn a read-only
 - Write authority is short-lived and cannot be self-created, renewed, widened, transferred, or used outside one approved execution attempt.
 - Merge, production deploy, rollback, credential administration, approval, secret management, and arbitrary shell remain unavailable.
 - Runtime authentication, Mission-state validation, mutation accounting, tool advertisement, and production smoke are implemented as subsequent Chat 11 packages on this contract.
-
