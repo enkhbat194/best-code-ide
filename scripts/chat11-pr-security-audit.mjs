@@ -53,7 +53,7 @@ let diffCheck = 'passed'
 try {
   run(['diff', '--check', range])
 } catch (error) {
-  diffCheck = String(error?.stderr || error?.message || error).slice(0, 4000)
+  diffCheck = String(error?.stdout || error?.stderr || error?.message || error).slice(0, 4000)
 }
 
 const changedFiles = run(['diff', '--name-only', '--diff-filter=ACMR', range])
@@ -89,6 +89,7 @@ const report = {
   base,
   head,
   diff_check: diffCheck === 'passed' ? 'passed' : 'failed',
+  diff_check_output: diffCheck === 'passed' ? [] : diffCheck.split('\n').filter(Boolean).slice(0, 100),
   changed_file_count: changedFiles.length,
   changed_files: changedFiles,
   protected_workflow_changed: protectedWorkflow,
