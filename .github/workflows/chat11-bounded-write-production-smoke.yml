@@ -79,7 +79,7 @@ jobs:
           BESTCODE_AUTH_TOKEN: ${{ secrets.BESTCODE_AUTH_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
         run: >-
-          node --import scripts/chat11-bounded-write-operation-budget.mjs
+          node --import ./scripts/chat11-bounded-write-operation-budget.mjs
           scripts/chat11-bounded-write-production-smoke.mjs
           --backend-url "$BESTCODE_BACKEND_URL"
           --repository "$GITHUB_REPOSITORY"
