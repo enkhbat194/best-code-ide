@@ -45,10 +45,25 @@ jobs:
           node-version: 22
       - name: Resolve exact PR range
         shell: bash
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           git fetch --no-tags --prune origin main:refs/remotes/origin/main
-          echo "BASE_SHA=$(git merge-base HEAD refs/remotes/origin/main)" >> "$GITHUB_ENV"
-          echo "HEAD_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          base_sha="$PR_BASE_SHA"
+          head_sha="$PR_HEAD_SHA"
+          if [[ -z "$base_sha" ]]; then
+            base_sha="$(git merge-base HEAD refs/remotes/origin/main)"
+          fi
+          if [[ -z "$head_sha" ]]; then
+            head_sha="$(git rev-parse HEAD)"
+          fi
+          if [[ ! "$base_sha" =~ ^[a-f0-9]{40}$ || ! "$head_sha" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "::error::Unable to resolve exact Chat 11 audit SHAs."
+            exit 1
+          fi
+          echo "BASE_SHA=$base_sha" >> "$GITHUB_ENV"
+          echo "HEAD_SHA=$head_sha" >> "$GITHUB_ENV"
       - name: Capture diff check and added-line secret scan
         shell: bash
         run: |
