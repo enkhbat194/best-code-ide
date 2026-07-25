@@ -62,6 +62,7 @@ jobs:
             fi
           done
       - name: Require exact main deployment and 100 percent traffic
+        id: release_integrity
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -87,6 +88,7 @@ jobs:
           --run-key "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           --output artifacts/chat11-bounded-write-production-smoke.json
       - name: Run supplemental production denial and lease cleanup proof
+        if: ${{ always() && steps.release_integrity.outcome == 'success' }}
         env:
           BESTCODE_AUTH_TOKEN: ${{ secrets.BESTCODE_AUTH_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -104,14 +106,6 @@ jobs:
           BESTCODE_AUTH_TOKEN: ${{ secrets.BESTCODE_AUTH_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          for file in \
-            artifacts/chat11-bounded-write-production-smoke.json \
-            artifacts/chat11-bounded-write-production-denials.json; do
-            if [[ ! -f "$file" ]]; then
-              echo "::error::Required Chat 11 evidence was not produced: $file"
-              exit 1
-            fi
-          done
           node -e "
             const fs = require('node:fs');
             const files = [
@@ -120,39 +114,46 @@ jobs:
             ];
             const owner = process.env.BESTCODE_AUTH_TOKEN || '';
             const github = process.env.GITHUB_TOKEN || '';
-            const fail = (file, message) => {
+            let failed = false;
+            const report = (file, message) => {
               console.log('::error::' + file + ': ' + message);
-              process.exit(1);
+              failed = true;
             };
             for (const file of files) {
+              if (!fs.existsSync(file)) {
+                report(file, 'required Chat 11 evidence was not produced');
+                continue;
+              }
               const raw = fs.readFileSync(file, 'utf8');
               if ((owner && raw.includes(owner)) || (github && raw.includes(github))) {
-                fail(file, 'evidence contains a protected secret value');
+                report(file, 'evidence contains a protected secret value');
               }
-              if (/bcwrite_v1\./i.test(raw)) fail(file, 'evidence contains a bounded credential marker');
-              if (/authorization/i.test(raw)) fail(file, 'evidence contains a sensitive header name');
-              if (/bearer\s/i.test(raw)) fail(file, 'evidence contains a bearer credential marker');
+              if (/bcwrite_v1\./i.test(raw)) report(file, 'evidence contains a bounded credential marker');
+              if (/authorization/i.test(raw)) report(file, 'evidence contains a sensitive header name');
+              if (/bearer\s/i.test(raw)) report(file, 'evidence contains a bearer credential marker');
               let evidence;
               try {
                 evidence = JSON.parse(raw);
               } catch (error) {
-                fail(file, 'invalid JSON: ' + error.message);
+                report(file, 'invalid JSON: ' + error.message);
+                continue;
               }
               if (evidence.execution?.conclusion !== 'success') {
                 const stage = evidence.execution?.failure?.stage ?? 'unknown';
                 const message = evidence.execution?.failure?.message ?? 'no failure message';
-                fail(file, 'execution.conclusion=' + String(evidence.execution?.conclusion) + '; stage=' + stage + '; message=' + message);
+                report(file, 'execution.conclusion=' + String(evidence.execution?.conclusion) + '; stage=' + stage + '; message=' + message);
               }
               if (evidence.security?.secret_value_persisted !== false) {
-                fail(file, 'security.secret_value_persisted must be false');
+                report(file, 'security.secret_value_persisted must be false');
               }
               if (evidence.security?.sensitive_header_persisted !== false) {
-                fail(file, 'security.sensitive_header_persisted must be false');
+                report(file, 'security.sensitive_header_persisted must be false');
               }
               if (evidence.security?.old_agent_branches_touched !== false) {
-                fail(file, 'security.old_agent_branches_touched must be false');
+                report(file, 'security.old_agent_branches_touched must be false');
               }
             }
+            if (failed) process.exit(1);
           "
           sha256sum artifacts/chat11-bounded-write-*.json > artifacts/SHA256SUMS.txt
       - name: Upload redacted immutable evidence
