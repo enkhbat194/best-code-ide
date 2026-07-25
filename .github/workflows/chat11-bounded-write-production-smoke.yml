@@ -79,7 +79,7 @@ jobs:
           BESTCODE_AUTH_TOKEN: ${{ secrets.BESTCODE_AUTH_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
         run: >-
-          node --import scripts/chat11-bounded-write-operation-budget.mjs
+          node --import ./scripts/chat11-bounded-write-operation-budget.mjs
           scripts/chat11-bounded-write-production-smoke.mjs
           --backend-url "$BESTCODE_BACKEND_URL"
           --repository "$GITHUB_REPOSITORY"
@@ -120,15 +120,38 @@ jobs:
             ];
             const owner = process.env.BESTCODE_AUTH_TOKEN || '';
             const github = process.env.GITHUB_TOKEN || '';
+            const fail = (file, message) => {
+              console.log('::error::' + file + ': ' + message);
+              process.exit(1);
+            };
             for (const file of files) {
               const raw = fs.readFileSync(file, 'utf8');
-              if ((owner && raw.includes(owner)) || (github && raw.includes(github))) process.exit(1);
-              if (/bcwrite_v1\./i.test(raw) || /authorization/i.test(raw) || /bearer\s/i.test(raw)) process.exit(1);
-              const evidence = JSON.parse(raw);
-              if (evidence.execution?.conclusion !== 'success') process.exit(1);
-              if (evidence.security?.secret_value_persisted !== false) process.exit(1);
-              if (evidence.security?.sensitive_header_persisted !== false) process.exit(1);
-              if (evidence.security?.old_agent_branches_touched !== false) process.exit(1);
+              if ((owner && raw.includes(owner)) || (github && raw.includes(github))) {
+                fail(file, 'evidence contains a protected secret value');
+              }
+              if (/bcwrite_v1\./i.test(raw)) fail(file, 'evidence contains a bounded credential marker');
+              if (/authorization/i.test(raw)) fail(file, 'evidence contains a sensitive header name');
+              if (/bearer\s/i.test(raw)) fail(file, 'evidence contains a bearer credential marker');
+              let evidence;
+              try {
+                evidence = JSON.parse(raw);
+              } catch (error) {
+                fail(file, 'invalid JSON: ' + error.message);
+              }
+              if (evidence.execution?.conclusion !== 'success') {
+                const stage = evidence.execution?.failure?.stage ?? 'unknown';
+                const message = evidence.execution?.failure?.message ?? 'no failure message';
+                fail(file, 'execution.conclusion=' + String(evidence.execution?.conclusion) + '; stage=' + stage + '; message=' + message);
+              }
+              if (evidence.security?.secret_value_persisted !== false) {
+                fail(file, 'security.secret_value_persisted must be false');
+              }
+              if (evidence.security?.sensitive_header_persisted !== false) {
+                fail(file, 'security.sensitive_header_persisted must be false');
+              }
+              if (evidence.security?.old_agent_branches_touched !== false) {
+                fail(file, 'security.old_agent_branches_touched must be false');
+              }
             }
           "
           sha256sum artifacts/chat11-bounded-write-*.json > artifacts/SHA256SUMS.txt
