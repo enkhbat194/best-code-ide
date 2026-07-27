@@ -32,7 +32,7 @@ jobs:
           scripts/chat11-bounded-write-production-denials.test.mjs
 
   chat11-pr-audit:
-    if: ${{ github.event_name != 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'pull_request' }}
     name: Chat 11 diff, secret, and dependency audit
     runs-on: ubuntu-latest
     steps:
