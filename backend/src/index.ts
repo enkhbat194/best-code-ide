@@ -3,6 +3,7 @@ import { handleApprovals } from './approvals'
 import { handleAssetBinaryApi } from './assetBinaryApi'
 import { handleAssetProcessingApi } from './assetProcessingApi'
 import { authenticateRequest, isAuthorized } from './authentication'
+import { unauthorizedResponse } from './authenticationResponse'
 import { handleBrainApi } from './brainApi'
 import { handleChat } from './chat'
 import { handleFilesCommit } from './files'
@@ -51,11 +52,8 @@ function disabledExplicitly(value: string | undefined): boolean {
   return value?.trim().toLowerCase() === 'false'
 }
 
-function unauthorized(): Response {
-  const response = jsonError('Unauthorized — missing or invalid Bearer token', 401)
-  response.headers.set('WWW-Authenticate', 'Bearer realm="BestCode MCP"')
-  response.headers.set('Cache-Control', 'no-store')
-  return response
+function unauthorized(code = 'AUTHENTICATION_REQUIRED'): Response {
+  return unauthorizedResponse(code)
 }
 
 function rateLimitIdentity(principal: RequestPrincipal | null): string {
@@ -141,7 +139,7 @@ export default {
         denial_code: authentication.denial_code,
         client: clientRateKey(req),
       })
-      return unauthorized()
+      return unauthorized(authentication.denial_code)
     }
 
     if (
@@ -161,7 +159,7 @@ export default {
         project_id: principal.project_id,
         denial_code: 'ENDPOINT_NOT_ALLOWED',
       })
-      return unauthorized()
+      return unauthorized('ENDPOINT_NOT_ALLOWED')
     }
 
     const credentialResponse = await handleSubscriptionCredentialApi(req, env, url, principal)
