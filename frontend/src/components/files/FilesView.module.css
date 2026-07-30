@@ -5,10 +5,56 @@
   min-height: 0;
 }
 
-.toolbar {
+.repoPanel {
   display: flex;
   gap: 8px;
   padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  align-items: stretch;
+  background: var(--bg-elevated);
+}
+
+.repoInputs {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr 0.8fr;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.repoInputs input {
+  min-width: 0;
+  border-radius: 8px;
+  padding: 8px 9px;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.openTreeButton {
+  border: none;
+  background: var(--accent);
+  color: white;
+  border-radius: 8px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.openTreeButton:disabled {
+  opacity: 0.5;
+}
+
+.toolbar {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--border);
   align-items: center;
 }
@@ -35,12 +81,6 @@
   opacity: 0.5;
 }
 
-.importButton {
-  color: var(--accent);
-  font-size: 12px;
-  white-space: nowrap;
-}
-
 .list {
   flex: 1;
   min-height: 0;
@@ -51,10 +91,10 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 11px 14px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--border);
   font-family: var(--mono);
-  font-size: 13.5px;
+  font-size: 13px;
 }
 
 .rowPath {
@@ -142,6 +182,25 @@
 .status.err {
   color: var(--danger);
 }
+
 .status.ok {
   color: var(--success);
+}
+
+@media (max-width: 640px) {
+  .repoPanel {
+    flex-direction: column;
+  }
+
+  .repoInputs {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .repoInputs input:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .openTreeButton {
+    width: 100%;
+  }
 }
