@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import CodeMirror from '@uiw/react-codemirror'
 import { oneDark } from '@codemirror/theme-one-dark'
-import { ChevronLeft, Save, UploadCloud, Trash2, FilePlus, DownloadCloud } from 'lucide-react'
+import { ChevronLeft, Save, UploadCloud, Trash2, FilePlus, FolderOpen } from 'lucide-react'
 import { useFsStore } from '../../store/fsStore'
+import { useSettingsStore } from '../../store/settingsStore'
 import { languageForPath } from '../../lib/languageForPath'
 import { commitFile } from '../../lib/backend'
 import { importGitHubWorkspace } from '../../lib/workspace'
@@ -10,6 +11,7 @@ import styles from './FilesView.module.css'
 
 export function FilesView() {
   const { files, openPath, openContent, dirty, refresh, open, setOpenContent, save, createFile, remove } = useFsStore()
+  const settings = useSettingsStore()
   const [newName, setNewName] = useState('')
   const [pushStatus, setPushStatus] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
   const [syncStatus, setSyncStatus] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
@@ -78,34 +80,42 @@ export function FilesView() {
     )
   }
 
+  const openFileTree = async () => {
+    if (!settings.backendUrl || !settings.authToken || !settings.owner || !settings.repo || !settings.branch) {
+      setSyncStatus({ kind: 'err', text: 'Backend, owner, repo, branch тохиргоо дутуу байна.' })
+      return
+    }
+    const shouldImport = files.length === 0 || window.confirm('Одоогийн local файлууд сонгосон repository-ийн файлаар солигдоно. Үргэлжлүүлэх үү?')
+    if (!shouldImport) return
+    setImporting(true)
+    setSyncStatus(null)
+    try {
+      const result = await importGitHubWorkspace(120)
+      await refresh()
+      const truncatedText = result.truncated ? ` Нийт ${result.eligibleCount} файлаас эхний ${result.importedCount}-г нээлээ.` : ''
+      const errorText = result.errorCount > 0 ? ` ${result.errorCount} файл алдаатай.` : ''
+      setSyncStatus({ kind: 'ok', text: `${settings.owner}/${settings.repo} · ${settings.branch} file tree нээгдлээ. ${result.importedCount} файл.${truncatedText}${errorText}` })
+    } catch (err) {
+      setSyncStatus({ kind: 'err', text: err instanceof Error ? err.message : String(err) })
+    } finally {
+      setImporting(false)
+    }
+  }
+
   return (
     <div className={styles.wrap}>
-      <div className={styles.toolbar}>
-        <button
-          className={styles.importButton}
-          title="GitHub repository-оос local workspace руу import хийх"
-          disabled={importing}
-          onClick={async () => {
-            const shouldImport = files.length === 0 || window.confirm('Ижил нэртэй local файлууд GitHub хувилбараар солигдоно. Үргэлжлүүлэх үү?')
-            if (!shouldImport) return
-            setImporting(true)
-            setSyncStatus(null)
-            try {
-              const result = await importGitHubWorkspace(40)
-              await refresh()
-              const truncatedText = result.truncated ? ` Нийт ${result.eligibleCount} файлаас эхний ${result.importedCount}-г импортлов.` : ''
-              const errorText = result.errorCount > 0 ? ` ${result.errorCount} файл алдаатай.` : ''
-              setSyncStatus({ kind: 'ok', text: `${result.importedCount} файл local workspace-д татагдлаа.${truncatedText}${errorText}` })
-            } catch (err) {
-              setSyncStatus({ kind: 'err', text: err instanceof Error ? err.message : String(err) })
-            } finally {
-              setImporting(false)
-            }
-          }}
-        >
-          <DownloadCloud size={16} />
-          <span>{importing ? 'Import...' : 'GitHub'}</span>
+      <div className={styles.repoPanel}>
+        <div className={styles.repoInputs}>
+          <input aria-label="GitHub owner" placeholder="owner" value={settings.owner} onChange={(e) => settings.setOwner(e.target.value)} />
+          <input aria-label="GitHub repository" placeholder="repository" value={settings.repo} onChange={(e) => settings.setRepo(e.target.value)} />
+          <input aria-label="GitHub branch" placeholder="branch" value={settings.branch} onChange={(e) => settings.setBranch(e.target.value)} />
+        </div>
+        <button className={styles.openTreeButton} disabled={importing} onClick={() => void openFileTree()}>
+          <FolderOpen size={17} /> {importing ? 'Opening…' : 'Open file tree'}
         </button>
+      </div>
+
+      <div className={styles.toolbar}>
         <input
           placeholder="шинэ файл: src/App.tsx"
           value={newName}
@@ -127,11 +137,12 @@ export function FilesView() {
       <div className={`${styles.list} scroll-y`}>
         {files.length === 0 && (
           <div className={styles.empty}>
-            Local файл алга. GitHub товчоор сонгосон repository/branch-аа утсандаа татах эсвэл шинэ файл үүсгэнэ үү.
+            Дээр owner, repository, branch-аа оруулаад Open file tree дарна уу.
           </div>
         )}
         {files
           .filter((file) => !file.isDir)
+          .sort((a, b) => a.path.localeCompare(b.path))
           .map((file) => (
             <div key={file.path} className={styles.row}>
               <button className={styles.rowPath} onClick={() => void open(file.path)}>
