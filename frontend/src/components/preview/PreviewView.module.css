@@ -15,6 +15,7 @@
 
 .toolbar select {
   flex: 1;
+  min-width: 0;
   border-radius: 8px;
   padding: 7px 8px;
   background: var(--bg-input);
@@ -25,16 +26,47 @@
 }
 
 .toolbar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 34px;
   border: none;
   background: var(--accent);
   color: white;
   border-radius: 8px;
-  padding: 7px 14px;
+  padding: 7px 12px;
   font-size: 13px;
+  white-space: nowrap;
 }
 
-.toolbar button:disabled {
+.toolbar .githubButton {
+  background: var(--bg-elevated);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.toolbar button:disabled,
+.toolbar select:disabled {
   opacity: 0.5;
+}
+
+.status {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+  font-size: 12px;
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .frameWrap {
@@ -69,6 +101,7 @@
 .consoleLine.error {
   color: var(--danger);
 }
+
 .consoleLine.warn {
   color: #fbbf24;
 }
@@ -78,4 +111,19 @@
   padding: 24px;
   text-align: center;
   color: var(--text-dim);
+}
+
+@media (max-width: 520px) {
+  .toolbar {
+    gap: 6px;
+    padding-inline: 8px;
+  }
+
+  .toolbar button {
+    padding-inline: 9px;
+  }
+
+  .toolbar .githubButton {
+    max-width: 116px;
+  }
 }
