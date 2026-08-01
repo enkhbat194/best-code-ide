@@ -38,6 +38,8 @@ export interface WorkspaceImportResult {
   projectRoot: string
 }
 
+type RepositorySelection = Pick<GitHubRepositorySummary, 'owner' | 'name' | 'defaultBranch'>
+
 function connectionSettings(): { backendUrl: string; authToken: string } {
   const { backendUrl, authToken } = useSettingsStore.getState()
   if (!backendUrl || !authToken) {
@@ -63,11 +65,13 @@ export async function listGitHubRepositories(): Promise<GitHubRepositorySummary[
 }
 
 export async function importGitHubWorkspace(
-  repository?: Pick<GitHubRepositorySummary, 'owner' | 'name' | 'defaultBranch'>,
-  maxFiles = 300,
+  repositoryOrMaxFiles?: RepositorySelection | number,
+  requestedMaxFiles = 300,
 ): Promise<WorkspaceImportResult> {
   const { backendUrl, authToken } = connectionSettings()
   const settings = useSettingsStore.getState()
+  const repository = typeof repositoryOrMaxFiles === 'number' ? undefined : repositoryOrMaxFiles
+  const maxFiles = typeof repositoryOrMaxFiles === 'number' ? repositoryOrMaxFiles : requestedMaxFiles
   const owner = repository?.owner ?? settings.owner
   const repo = repository?.name ?? settings.repo
   const branch = repository?.defaultBranch ?? settings.branch
