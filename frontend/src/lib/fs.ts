@@ -71,6 +71,18 @@ export async function deletePath(path: string): Promise<void> {
   }
 }
 
+export async function clearWorkspace(): Promise<void> {
+  let names: string[] = []
+  try {
+    names = await pfs.readdir('/')
+  } catch {
+    return
+  }
+  for (const name of names) {
+    await deletePath(`/${name}`)
+  }
+}
+
 export async function fileExists(path: string): Promise<boolean> {
   try {
     await pfs.stat(path)
